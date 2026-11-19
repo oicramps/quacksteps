@@ -25,3 +25,36 @@ jobs:
       - run: yarn typecheck
       - run: yarn workspace quack-companion build
       - run: yarn workspace @quack/extension zip
+
+  mac:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Select Xcode 26
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then
+            echo "No Xcode 26 found on this runner" >&2
+            ls -d /Applications/Xcode*.app >&2
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          xcodebuild -version
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - run: yarn install --frozen-lockfile
+      - run: yarn workspace @quack/renderer build
+      - name: Swift build and test
+        working-directory: mac/Packages
+        run: |
+          swift build
+          swift test
+      - name: Assemble the app bundle
+        run: mac/scripts/build-app.sh --debug

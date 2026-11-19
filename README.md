@@ -56,6 +56,46 @@ On macOS, install also compiles `~/.quack/bin/quack-menubar` when the Xcode Comm
 
 ---
 
+## Quacksteps for macOS
+
+Quacksteps is a native macOS app for reviewing pull requests: an inbox of the PRs waiting on you, a diff view, and agent-backed questions about selected lines. It runs the same local server (`quackd`) as the extension's companion and never posts anything to GitHub.
+
+### Requirements
+- **macOS 26**
+- **GitHub CLI** (`gh`), signed in
+- **git >= 2.30**
+- **Cursor CLI** or **Claude Code** (`claude`), signed in locally
+
+### Before first run
+The build is not signed yet, so macOS blocks the first open.
+
+1. Download `Quacksteps.zip` from the [latest release](https://github.com/oicramps/quack/releases/latest) and unzip it.
+2. Move `Quacksteps.app` to Applications before you open it for the first time. The server is registered from wherever the app is.
+3. Open it once. macOS says the app was blocked; click **Done**, not Move to Bin.
+4. Open **System Settings › Privacy & Security**, scroll to Security, click **Open Anyway** next to Quacksteps, and confirm with your password or Touch ID. The button only shows for a while after the blocked open; if it is gone, open the app again first.
+
+If the login item is refused, add Quacksteps in **System Settings › General › Login Items**. Moving the app later is fine: on the next launch it rewrites the server's launchd plist to the new path.
+
+### Build from source
+Needs Xcode 26 or later, Node 22, Yarn 1, and [Bun](https://bun.sh).
+
+```bash
+make mac                # release build into mac/build/Quacksteps.app
+make mac-debug          # debug build
+make mac-test           # Swift tests and yarn test
+make mac-run            # build, then open the app
+make clean-mac          # remove build output
+```
+
+Set `DEVELOPER_DIR` if Xcode 26 is not at `/Applications/Xcode.app`.
+
+### Uninstall
+Quit Quacksteps, run `make mac-uninstall-server` (removes the launchd agent `com.polarsteps.quacksteps.server`), then delete the app. To remove its data as well, delete `~/.quack`.
+
+For the pilot checklist, see [docs/pilot.md](docs/pilot.md).
+
+---
+
 ## Configuration & Cleanup
 
 On first run, Quack creates `~/.quack/config.json` and scans common project folders (`~/Documents/Dev/Projects`, `~/Projects`, `~/Developer`, `~/Development`, `~/Dev`, `~/repos`, `~/src`, `~/code`, `~/workspace`, `~/work`, `~/GitHub`, `~/git`) up to 2 levels deep to match your local clone's `origin` remote. To link a clone anywhere else (or with a custom SSH host alias):
@@ -117,4 +157,5 @@ To load your local build in Chrome, Edge, or Brave: open `chrome://extensions` (
 ## Further Reading
 
 - **[Architecture](docs/architecture.md)** — Message protocol, worktree locking, agent adapters, and security boundaries.
+- **[Pilot checklist](docs/pilot.md)** — Install, first-week checks, and what to report for the Quacksteps pilot.
 - **[Release Guide & Privacy Policy](docs/release.md)** — CI/CD workflows, Trusted Publishing, Chrome Web Store reference, and privacy policy.

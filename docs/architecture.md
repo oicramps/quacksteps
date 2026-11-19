@@ -23,7 +23,7 @@ flowchart TB
   end
 
   subgraph Host["Local Machine (quack-companion)"]
-    NM["host.ts + framing.ts<br/>32-bit LE length-prefixed JSON + validation"]
+    NM["stdio.ts + router.ts + framing.ts<br/>32-bit LE length-prefixed JSON + validation"]
     SES["session.ts + worktree.ts<br/>Clone lookup, PR fetch & per-PR lock"]
     CHK["checks.ts<br/>gh pr checks + failed log tails"]
     ADP["Agent Adapters<br/>Cursor (ACP) / Claude Code (stream-json)"]
@@ -107,3 +107,15 @@ After every turn, `session.ts` checks `git status --porcelain` in the worktree (
 | **Strict input validation** | `validate.ts` enforces length caps and regexes on all wire fields; model names, branches, session IDs, and workflow names reject leading `-` to block flag injection. Commit ids from `gh` have to match a SHA before they are passed to git. CI logs are redacted before they enter a prompt. |
 | **Frame bounds** | Incoming frames cap at 64 MB; outgoing text deltas split at 64 KB (`MAX_TEXT_DELTA`) to stay under Chrome's 1 MB native messaging limit. |
 | **Process tree cleanup** | Subprocesses run in their own process group (`detached: true`) and are killed via `SIGTERM` → `SIGKILL` (`killTree`) on cancel or browser disconnect. |
+
+---
+
+## Quacksteps (macOS)
+
+Quacksteps is a native app that reuses the companion's review logic through a long-running local server.
+
+- **quackd** (`companion`, started as `quackd serve`): the companion compiled with Bun into one binary that ships inside the app bundle. It listens on a Unix socket at `~/.quack/run/quack.sock`. The app registers it as the launchd agent `com.polarsteps.quacksteps.server`, and rewrites the plist if the app moves. The app restarts a server whose version differs from `QUACK_VERSION`.
+- **Swift packages** (`mac/Packages`): `QuackProtocol` (wire types), `QuackClient` (socket client and launch agent installer), `QuackStores` (app state), `QuackUI` (SwiftUI views), `Quacksteps` (the app target), and `QuackSnapshots` (a tool that renders views for design checks).
+- **Diff renderer** (`mac/renderer`): a small web bundle that highlights diffs with Shiki. It is loaded from `Contents/Resources/renderer` in the app bundle with the network blocked.
+- **Shared fixtures**: `shared/fixtures/messages.ts` generates `messages.json`, which the Swift tests decode, so the TypeScript and Swift message types cannot drift apart unnoticed.
+- **Build and release**: `mac/scripts/build-app.sh` assembles and ad hoc signs `Quacksteps.app`. The release workflow zips it as `Quacksteps.zip` and attaches it to the GitHub Release.
