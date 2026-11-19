@@ -44,7 +44,9 @@ public struct ChatInspector: View {
                 store.selectedFile = path
                 return .handled
             }
-            // Remote links are fine to open in the browser, but never load anything inline.
+            // Answers can carry prompt-injected links (from PR content), so only web links open, in the
+            // browser. file://, app schemes (vscode://, x-apple…) and anything else are dropped.
+            guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else { return .discarded }
             return .systemAction
         })
     }

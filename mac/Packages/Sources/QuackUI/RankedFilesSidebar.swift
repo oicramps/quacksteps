@@ -6,11 +6,15 @@ import SwiftUI
 public struct RankedFilesSidebar: View {
     @Bindable var store: PRStore
     var model: AppModel
+    /// Bumped by the window (⌘F) to focus the filter field.
+    var focusRequest: Int
     @State private var filter = ""
+    @FocusState private var filterFocused: Bool
 
-    public init(store: PRStore, model: AppModel) {
+    public init(store: PRStore, model: AppModel, focusRequest: Int = 0) {
         self.store = store
         self.model = model
+        self.focusRequest = focusRequest
     }
 
     // MARK: Rows
@@ -76,6 +80,8 @@ public struct RankedFilesSidebar: View {
             }
         }
         .searchable(text: $filter, placement: .sidebar, prompt: "Filter files")
+        .searchFocused($filterFocused)
+        .onChange(of: focusRequest) { filterFocused = true }
         .frame(minWidth: 240)
         .onChange(of: labelsRunning) { _, running in
             // Polite, factual announcement; the thinking line itself stays hidden from VoiceOver.

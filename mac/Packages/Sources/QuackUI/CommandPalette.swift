@@ -139,7 +139,11 @@ public struct CommandPalette: View {
             .sorted { $0.1 > $1.1 }
             .prefix(limit)
             .map { PaletteItem.pr($0.0) }
-        if !prs.isEmpty { result.append(PaletteGroup(title: "Other PRs", items: Array(prs))) }
+        if !prs.isEmpty {
+            // In the inbox there's no PR on screen, so the PRs come first.
+            let group = PaletteGroup(title: "Other PRs", items: Array(prs))
+            if store == nil { result.insert(group, at: 0) } else { result.append(group) }
+        }
         return result
     }
 
@@ -180,6 +184,8 @@ public struct CommandPalette: View {
     }
 
     private func ask(_ item: PaletteItem) {
+        // Asking needs a PR chat to land in; the inbox palette has none.
+        guard store != nil else { return }
         switch item {
         case let .file(file):
             isPresented = false
@@ -366,7 +372,7 @@ public struct CommandPalette: View {
         HStack(spacing: 16) {
             Text("↑ ↓ move")
             Text("↩ open")
-            Text("⌘↩ ask about it")
+            if store != nil { Text("⌘↩ ask about it") }
             Spacer()
         }
         .font(.system(size: 11))

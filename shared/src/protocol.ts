@@ -45,6 +45,8 @@ export interface AgentStatus {
   label: string;
   state: AgentState;
   version?: string;
+  /** Where the CLI was found (Settings › Agents shows it; launchd's PATH is minimal). */
+  path?: string;
   /** Empty string means "let the tool pick its default model". */
   models: string[];
   fixSteps: FixStep[];

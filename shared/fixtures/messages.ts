@@ -31,7 +31,9 @@ export const appMessages: AppMessage[] = [
   { type: 'pr_diff', requestId: 'd1', pr, headSha: A },
   { type: 'threads', requestId: 't1', pr },
   { type: 'ask', requestId: 'a1', agent: 'cursor', model: '', pr: { ...pr, headSha: A }, selections: [{ path: 'src/map.ts', side: 'new', startLine: 47, endLine: 51 }], question: 'Why cluster here?', sessionId: null },
+  { type: 'ask', requestId: 'a2', agent: 'claude-code', model: '', pr: { ...pr, headSha: A }, selections: [], question: 'And the tests?', sessionId: null, history: [{ question: 'Why cluster here?', answer: 'Because pins overlap.' }] },
   { type: 'cancel', requestId: 'a1' },
+  { type: 'close_session', requestId: 'cs1', agent: 'cursor', sessionId: 's-1' },
   { type: 'shutdown', requestId: 'x1' },
   { type: 'setup_checks', requestId: 'c1' },
   { type: 'settings', requestId: 'g1' },
@@ -48,7 +50,7 @@ export const serverMessages: ServerMessage[] = [
     type: 'agents',
     requestId: 's2',
     agents: [
-      { id: 'cursor', label: 'Cursor', state: 'ready', version: '2026.11.01', models: ['', 'auto'], fixSteps: [] },
+      { id: 'cursor', label: 'Cursor', state: 'ready', version: '2026.11.01', path: '/Users/dev/.local/bin/cursor-agent', models: ['', 'auto'], fixSteps: [] },
       { id: 'claude-code', label: 'Claude Code', state: 'not_installed', models: [], fixSteps: [{ text: 'Install Claude Code', command: 'npm i -g @anthropic-ai/claude-code' }] },
     ],
     pending: [],

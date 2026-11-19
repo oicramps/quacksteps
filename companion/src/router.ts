@@ -15,6 +15,8 @@ import { inspectWorkspace, saveWorkspace } from './repo.ts';
 import { handleAsk } from './session.ts';
 
 const STATUS_TTL_MS = 60_000;
+/** Subscriptions one connection may hold (the app uses a handful). */
+const MAX_SUBSCRIPTIONS = 64;
 // Chrome limits host-to-extension native messages to 1 MB; chunk large text deltas to 64 KB.
 // The socket keeps the same split so the router behaves the same on both transports.
 export const MAX_TEXT_DELTA = 64 * 1024;
@@ -274,6 +276,13 @@ export function createRouter(opts: RouterOptions = {}) {
         break;
       case 'subscribe': {
         const { topic } = message;
+        // Reusing a requestId replaces that subscription (its listener stops); a connection has a cap.
+        s.subscriptions.get(message.requestId)?.stop?.();
+        s.subscriptions.delete(message.requestId);
+        if (s.subscriptions.size >= MAX_SUBSCRIPTIONS) {
+          conn.send({ type: 'event', requestId: message.requestId, event: { type: 'error', code: 'bad_request', message: 'Too many subscriptions on one connection.' } });
+          break;
+        }
         if (topic === 'agents') {
           s.subscriptions.set(message.requestId, { topic: 'agents' });
           probeAgents((agents, pending) => {

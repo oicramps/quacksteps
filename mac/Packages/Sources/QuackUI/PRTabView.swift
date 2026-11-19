@@ -9,17 +9,24 @@ public struct PRTabView: View {
     let model: AppModel
     let workspace: Workspace
     let store: PRStore
+    /// Show or hide the window's sidebar (ranked files). Owned by the window.
+    var toggleSidebar: () -> Void
+    /// Focus the ranked-files filter field. Owned by the window.
+    var focusFilter: () -> Void
 
     @AppStorage("diff.layout") private var layoutRaw = DiffLayout.unified.rawValue
     @AppStorage("chat.shown") private var showChat = true
     @State private var focusComposer = false
     @State private var controller = DiffController()
     @State private var paletteShown = false
+    @State private var opener = WorktreeOpener()
 
-    public init(model: AppModel, workspace: Workspace, store: PRStore) {
+    public init(model: AppModel, workspace: Workspace, store: PRStore, toggleSidebar: @escaping () -> Void = {}, focusFilter: @escaping () -> Void = {}) {
         self.model = model
         self.workspace = workspace
         self.store = store
+        self.toggleSidebar = toggleSidebar
+        self.focusFilter = focusFilter
     }
 
     private var layout: DiffLayout { DiffLayout(rawValue: layoutRaw) ?? .unified }
@@ -65,7 +72,7 @@ public struct PRTabView: View {
             .help("Unified or split diff (⌘⇧D)")
         }
         ToolbarItem(placement: .primaryAction) { ReviewControl(store: store) }
-        ToolbarItem(placement: .primaryAction) { OpenInControl(store: store) }
+        ToolbarItem(placement: .primaryAction) { OpenInControl(store: store, opener: opener) }
         ToolbarItem(placement: .primaryAction) {
             Button { NSWorkspace.shared.open(store.pr.githubURL) } label: { Label("Open on GitHub", systemImage: "globe") }
                 .help("Open on GitHub (⌘⇧G)")
@@ -86,6 +93,8 @@ public struct PRTabView: View {
                 focusComposer = true
             }.keyboardShortcut("l")
             Button("") { toggleReview() }.keyboardShortcut("c", modifiers: [.command, .shift])
+            Button("") { opener.open(.cursor, store: store) }.keyboardShortcut("o", modifiers: [.command, .shift])
+            Button("") { opener.open(.terminal, store: store) }.keyboardShortcut("t", modifiers: [.command, .shift])
             Button("") { Task { await store.updateReview() } }.keyboardShortcut("u", modifiers: [.command, .shift])
             Button("") { NSWorkspace.shared.open(store.pr.githubURL) }.keyboardShortcut("g", modifiers: [.command, .shift])
             Button("") { layoutRaw = layout == .unified ? DiffLayout.split.rawValue : DiffLayout.unified.rawValue }
@@ -122,6 +131,10 @@ public struct PRTabView: View {
             PaletteCommand(id: "layout", title: layout == .unified ? "Show split diff" : "Show unified diff", symbol: "rectangle.split.2x1", shortcut: "⌘⇧D") {
                 layoutRaw = layout == .unified ? DiffLayout.split.rawValue : DiffLayout.unified.rawValue
             },
+            PaletteCommand(id: "cursor", title: "Open worktree in Cursor", symbol: "arrow.up.forward.app", shortcut: "⌘⇧O") { opener.open(.cursor, store: store) },
+            PaletteCommand(id: "terminal", title: "Open worktree in Terminal", symbol: "terminal", shortcut: "⌘⇧T") { opener.open(.terminal, store: store) },
+            PaletteCommand(id: "sidebar", title: "Show or hide sidebar", symbol: "sidebar.left", shortcut: "⌃⌘S") { toggleSidebar() },
+            PaletteCommand(id: "filter", title: "Filter files", symbol: "magnifyingglass", shortcut: "⌘F") { focusFilter() },
             PaletteCommand(id: "next-file", title: "Next file", symbol: "chevron.down", shortcut: "j") { controller.nextFile() },
             PaletteCommand(id: "prev-file", title: "Previous file", symbol: "chevron.up", shortcut: "k") { controller.previousFile() },
             PaletteCommand(id: "next-hunk", title: "Next hunk", symbol: "arrow.down.to.line", shortcut: "n") { controller.nextHunk() },

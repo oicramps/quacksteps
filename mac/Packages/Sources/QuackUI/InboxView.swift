@@ -24,6 +24,11 @@ public struct InboxView: View {
     @State private var search = ""
     @State private var selection: String?
     @State private var now = Date()
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var paletteShown = false
+    @FocusState private var inboxSearchFocused: Bool
+    /// Bumped to focus the PR tab's ranked-files filter.
+    @State private var filterFocusRequest = 0
 
     public init(model: AppModel, workspace: Workspace? = nil, openPR: @escaping (PrKey) -> Void, openSetup: @escaping () -> Void, openAccounts: @escaping () -> Void = {}) {
         self.model = model
@@ -36,10 +41,10 @@ public struct InboxView: View {
     private var activeFilter: InboxFilter { filter ?? .everything }
 
     public var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             // Xcode-style: the sidebar follows the tab. Inbox filters for the Inbox, ranked files for a PR.
             if let workspace, case let .pr(pr) = workspace.selected {
-                RankedFilesSidebar(store: model.store(for: pr), model: model)
+                RankedFilesSidebar(store: model.store(for: pr), model: model, focusRequest: filterFocusRequest)
                     .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 420)
                     .id(pr.id)
             } else {
@@ -53,13 +58,14 @@ public struct InboxView: View {
                     WorkspaceTabBar(model: model, workspace: workspace)
                     switch workspace.selected {
                     case .inbox: detail
-                    case let .pr(pr): PRTabView(model: model, workspace: workspace, store: model.store(for: pr)).id(pr.id)
+                    case let .pr(pr): PRTabView(model: model, workspace: workspace, store: model.store(for: pr), toggleSidebar: toggleSidebar, focusFilter: focusPRFilter).id(pr.id)
                     }
                 }
             } else {
                 detail
             }
         }
+        .background(windowShortcuts)
         // Picking a filter or repo always shows the Inbox tab.
         .onChange(of: filter) { workspace?.selected = .inbox }
         .task {
@@ -68,6 +74,81 @@ public struct InboxView: View {
                 now = Date()
             }
         }
+    }
+
+    // MARK: Shortcuts
+
+    private var onPRTab: Bool {
+        if let workspace, case .pr = workspace.selected { return true }
+        return false
+    }
+
+    private func toggleSidebar() {
+        columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
+    }
+
+    private func focusPRFilter() {
+        if columnVisibility == .detailOnly {
+            // The sidebar view is rebuilt when it reappears; give it a beat before asking for focus.
+            columnVisibility = .all
+            Task {
+                try? await Task.sleep(for: .milliseconds(250))
+                filterFocusRequest += 1
+            }
+        } else {
+            filterFocusRequest += 1
+        }
+    }
+
+    /// Shortcuts for the whole window, as hidden buttons (menu commands can't see this view's state).
+    /// ⌘F is for the PR tab's filter here; the inbox's own shortcuts live in `inboxShortcuts`.
+    private var windowShortcuts: some View {
+        Group {
+            Button("") { toggleSidebar() }.keyboardShortcut("s", modifiers: [.command, .control])
+            if onPRTab {
+                Button("") { focusPRFilter() }.keyboardShortcut("f")
+            }
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+    }
+
+    private var selectedItem: InboxItem? {
+        guard let selection else { return nil }
+        return model.items.first { $0.id == selection }
+    }
+
+    private func toggleReview(_ item: InboxItem) {
+        Task {
+            if item.review == nil { await model.startReview(item.pr) } else { await model.stopReview(item.pr) }
+        }
+    }
+
+    /// The Inbox tab's shortcuts. Only in the tree while the Inbox is showing, so ⌘K never double-fires with the PR tab's.
+    private var inboxShortcuts: some View {
+        Group {
+            Button("") { paletteShown.toggle() }.keyboardShortcut("k")
+            Button("") { inboxSearchFocused = true }.keyboardShortcut("f")
+            Button("") { if let item = selectedItem { toggleReview(item) } }.keyboardShortcut("c", modifiers: [.command, .shift])
+            Button("") { if let item = selectedItem { NSWorkspace.shared.open(item.pr.githubURL) } }.keyboardShortcut("g", modifiers: [.command, .shift])
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+    }
+
+    private var inboxCommands: [PaletteCommand] {
+        var list = [
+            PaletteCommand(id: "refresh", title: "Refresh from GitHub", symbol: "arrow.clockwise", shortcut: "⌘R") { Task { await model.refresh() } },
+            PaletteCommand(id: "sidebar", title: "Show or hide sidebar", symbol: "sidebar.left", shortcut: "⌃⌘S") { toggleSidebar() },
+            PaletteCommand(id: "search", title: "Search PRs", symbol: "magnifyingglass", shortcut: "⌘F") { inboxSearchFocused = true },
+        ]
+        if let item = selectedItem {
+            list.append(PaletteCommand(id: "github", title: "Open on GitHub", symbol: "globe", shortcut: "⌘⇧G") { NSWorkspace.shared.open(item.pr.githubURL) })
+            list.append(PaletteCommand(id: "review", title: item.review == nil ? "Start reviewing" : "Stop reviewing", symbol: "eyeglasses", shortcut: "⌘⇧C") { toggleReview(item) })
+        }
+        return list
     }
 
     // MARK: Sidebar
@@ -146,6 +227,13 @@ public struct InboxView: View {
         .navigationTitle(model.accountScopeName.map { "Inbox · \($0)" } ?? "Inbox")
         .navigationSubtitle(subtitle)
         .searchable(text: $search, prompt: "Search PRs")
+        .searchFocused($inboxSearchFocused)
+        .background(inboxShortcuts)
+        .overlay {
+            if paletteShown, let workspace {
+                CommandPalette(model: model, workspace: workspace, store: nil, commands: inboxCommands, isPresented: $paletteShown) { _ in }
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -253,10 +341,13 @@ public struct InboxView: View {
             if ids.count == 1, let item = model.items.first(where: { $0.id == ids.first }) {
                 if item.review == nil {
                     Button("Start reviewing") { Task { await model.startReview(item.pr) } }
+                        .keyboardShortcut("c", modifiers: [.command, .shift])
                 } else {
                     Button("Stop reviewing") { Task { await model.stopReview(item.pr) } }
+                        .keyboardShortcut("c", modifiers: [.command, .shift])
                 }
                 Button("Open on GitHub") { NSWorkspace.shared.open(item.pr.githubURL) }
+                    .keyboardShortcut("g", modifiers: [.command, .shift])
                 Button("Copy link") { copyToPasteboard(item.pr.githubURL.absoluteString) }
             }
         } primaryAction: { ids in

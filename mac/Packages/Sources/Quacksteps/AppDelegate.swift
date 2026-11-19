@@ -41,7 +41,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 n.post(events.filter { e in !model.isRepoHidden("\(e.pr.owner)/\(e.pr.repo)") }, items: items)
             }
         }
+        // Closing a PR tab ends its agent sessions instead of leaving them warm for 15 minutes.
+        workspace.onClose = { [weak self] pr in self?.model.store(for: pr).endSessions() }
+        observeWakeAndFocus()
         model.start()
+    }
+
+    /// The spec's extra polls: when the Mac wakes and when the app comes to the front, unless the inbox
+    /// was checked in the last 30 seconds.
+    private func observeWakeAndFocus() {
+        let refresh: @Sendable (Notification) -> Void = { [weak self] _ in
+            Task { @MainActor in
+                guard let model = self?.model, model.isConnected else { return }
+                let last = model.inbox.flatMap { ISODate.parse($0.fetchedAt) } ?? .distantPast
+                if Date().timeIntervalSince(last) > 30 { await model.refresh() }
+            }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: refresh)
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main, using: refresh)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

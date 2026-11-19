@@ -163,6 +163,11 @@ public final class ServerConnection: Sendable {
         }
     }
 
+    /// Sends a message that has no reply (e.g. close_session). Dropped when not connected.
+    public func post(_ request: AppRequest) {
+        send(request, id: nextRequestId())
+    }
+
     private func send(_ request: AppRequest, id: String) {
         guard let json = try? JSONSerialization.data(withJSONObject: request.json(requestId: id)) else { return }
         let frame = FrameDecoder.encode(json)

@@ -123,7 +123,7 @@ export const cursorAdapter: Adapter = {
         id: 'cursor',
         label: 'Cursor',
         state: 'not_installed',
-        version: cli.version,
+        version: cli.version, path: cli.bin,
         models: [],
         fixSteps: [{ text: `Cursor CLI ${cli.version} is too old for Quack. Update it`, command: `${cli.name} update` }, RECHECK],
       };
@@ -133,7 +133,7 @@ export const cursorAdapter: Adapter = {
         id: 'cursor',
         label: 'Cursor',
         state: 'not_installed',
-        version: cli.version,
+        version: cli.version, path: cli.bin,
         models: [],
         fixSteps: [{ text: CURSOR_UPDATE_TEXT, command: `${cli.name} update` }, RECHECK],
       };
@@ -144,12 +144,12 @@ export const cursorAdapter: Adapter = {
         id: 'cursor',
         label: 'Cursor',
         state: 'not_logged_in',
-        version: cli.version,
+        version: cli.version, path: cli.bin,
         models: list,
         fixSteps: [{ text: 'Log in to the Cursor CLI (opens your browser)', command: `${cli.name} login` }, RECHECK],
       };
     }
-    return { id: 'cursor', label: 'Cursor', state: 'ready', version: cli.version, models: list, fixSteps: [] };
+    return { id: 'cursor', label: 'Cursor', state: 'ready', version: cli.version, path: cli.bin, models: list, fixSteps: [] };
   },
 
   async *ask(opts: AskOpts) {

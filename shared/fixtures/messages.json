@@ -119,8 +119,35 @@
       "sessionId": null
     },
     {
+      "type": "ask",
+      "requestId": "a2",
+      "agent": "claude-code",
+      "model": "",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127,
+        "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a"
+      },
+      "selections": [],
+      "question": "And the tests?",
+      "sessionId": null,
+      "history": [
+        {
+          "question": "Why cluster here?",
+          "answer": "Because pins overlap."
+        }
+      ]
+    },
+    {
       "type": "cancel",
       "requestId": "a1"
+    },
+    {
+      "type": "close_session",
+      "requestId": "cs1",
+      "agent": "cursor",
+      "sessionId": "s-1"
     },
     {
       "type": "shutdown",
@@ -196,6 +223,7 @@
           "label": "Cursor",
           "state": "ready",
           "version": "2026.11.01",
+          "path": "/Users/dev/.local/bin/cursor-agent",
           "models": [
             "",
             "auto"

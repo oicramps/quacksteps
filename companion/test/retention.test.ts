@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { type Config, DEFAULTS } from '../src/config.ts';
-import { enforceRetention, prRef } from '../src/worktree.ts';
+import { enforceRetention, prRef, removeClosedWorktrees } from '../src/worktree.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -99,6 +99,34 @@ test('retention deletes old and excess worktrees only under the worktree root', 
       removed.some((dir) => dir.startsWith(outside) || dir.startsWith(secret) || dir.startsWith(escaped)),
       false,
     );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('worktrees of PRs closed over a day ago are removed; open, recent and unknown ones stay', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'quack-closed-'));
+  try {
+    const worktreeRoot = path.join(root, 'worktrees');
+    for (const n of [1, 2, 3, 4, 5]) fs.mkdirSync(path.join(worktreeRoot, 'acme', 'web', `pr-${n}`), { recursive: true });
+    const now = Date.parse('2026-11-19T12:00:00Z');
+    const closed: Record<number, string | null | 'fail'> = { 1: '2026-11-17T12:00:00Z', 2: '2026-11-19T11:00:00Z', 3: null, 5: 'fail' };
+    const asked: number[] = [];
+    const removed = await removeClosedWorktrees(
+      { ...DEFAULTS, worktreeRoot },
+      async () => null,
+      async (_owner, _repo, n) => {
+        asked.push(n);
+        const c = closed[n];
+        if (c === 'fail') throw new Error('gh: HTTP 502');
+        return c ?? null;
+      },
+      (_owner, _repo, n) => n === 4, // open in the inbox: no lookup
+      now,
+    );
+    assert.deepEqual(removed.map((d) => path.basename(d)), ['pr-1']);
+    assert.deepEqual(asked.sort(), [1, 2, 3, 5]);
+    for (const n of [2, 3, 4, 5]) assert.ok(fs.existsSync(path.join(worktreeRoot, 'acme', 'web', `pr-${n}`)), `pr-${n} stays`);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

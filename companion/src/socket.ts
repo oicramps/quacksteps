@@ -8,7 +8,9 @@ import { type Connection, type Router, encodeFrames } from './router.ts';
 import { ValidationError, validateAppMessage } from './validate.ts';
 
 /** Incoming frames on the socket are capped lower than on stdio: the app never sends large payloads. */
-export const SOCKET_MAX_INCOMING = 16 * 1024 * 1024;
+export /** Unsent bytes a client may leave queued before the server gives up on it. */
+const MAX_UNREAD_BYTES = 64 * 1024 * 1024;
+const SOCKET_MAX_INCOMING = 16 * 1024 * 1024;
 
 export interface SocketServerOptions {
   socketPath: string;
@@ -50,6 +52,12 @@ export async function startSocketServer({ socketPath, router }: SocketServerOpti
       send(message: ServerMessage) {
         if (closed || socket.destroyed) return;
         for (const frame of encodeFrames(message)) socket.write(frame);
+        // A client that stops reading would make the server buffer without limit.
+        if (socket.writableLength > MAX_UNREAD_BYTES) {
+          log('socket', id, 'client is not reading; closing');
+          closed = true;
+          socket.destroy();
+        }
       },
     };
 
@@ -62,6 +70,7 @@ export async function startSocketServer({ socketPath, router }: SocketServerOpti
 
     const decoder = new MessageDecoder(SOCKET_MAX_INCOMING);
     socket.on('data', (chunk: Buffer) => {
+      if (closed) return;
       let messages: unknown[];
       try {
         messages = decoder.push(chunk);
@@ -77,13 +86,19 @@ export async function startSocketServer({ socketPath, router }: SocketServerOpti
           message = validateAppMessage(raw);
         } catch (err) {
           reject(requestId, err instanceof ValidationError ? err.message : String(err));
-          if (!greeted) socket.end();
+          if (!greeted) {
+            // Nothing else in this chunk (or after it) is handled before a valid hello.
+            closed = true;
+            socket.destroySoon();
+            return;
+          }
           continue;
         }
         if (!greeted) {
           if (message.type !== 'hello') {
             reject(requestId, 'the first message must be hello');
-            socket.end();
+            closed = true;
+            socket.destroySoon();
             return;
           }
           greeted = true;

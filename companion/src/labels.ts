@@ -276,6 +276,9 @@ export const realLabelOps: LabelOps = {
     const full = path.resolve(dir, file);
     if (!full.startsWith(dir + path.sep)) return null;
     try {
+      // Follow links the way the kernel does: only read files that really live in the worktree.
+      const [real, realDir] = await Promise.all([fs.realpath(full), fs.realpath(dir)]);
+      if (!real.startsWith(realDir + path.sep)) return null;
       const fh = await fs.open(full, 'r');
       try {
         if (!(await fh.stat()).isFile()) return null;
@@ -570,7 +573,8 @@ export class LabelRunner {
       let reply = '';
       for await (const ev of adapter.ask({ cwd, prompt: text, model: job.model, sessionId, signal })) {
         if (ev.type === 'text') reply += ev.delta;
-        else if (ev.type === 'session') sessionId = ev.sessionId;
+        // Same rule as session ids from the socket: it becomes a CLI argument for the repair turn.
+        else if (ev.type === 'session' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(ev.sessionId)) sessionId = ev.sessionId;
         else if (ev.type === 'error') throw new Error(`${adapter.label} failed: ${ev.message}`);
       }
       if (signal.aborted) throw signal.reason;

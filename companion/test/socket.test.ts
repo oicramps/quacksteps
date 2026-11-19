@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -242,9 +243,20 @@ test('the instance lock admits one live holder and takes over a stale one', () =
   assert.ok(acquireInstanceLock(lockPath));
   assert.equal(fs.statSync(path.dirname(lockPath)).mode & 0o777, 0o700);
 
-  // A live holder (pid 1, launchd) blocks us.
+  // A live Quack server holds it: we stay out.
+  const server = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)', 'quackd', 'serve'], { stdio: 'ignore' });
+  try {
+    for (let i = 0; i < 50 && !server.pid; i++) execFileSync('/bin/sleep', ['0.02']);
+    fs.writeFileSync(lockPath, String(server.pid));
+    assert.equal(acquireInstanceLock(lockPath), false);
+  } finally {
+    server.kill();
+  }
+
+  // A PID that is alive but isn't a Quack server (reused after a reboot; here launchd) is stale.
   fs.writeFileSync(lockPath, '1');
-  assert.equal(acquireInstanceLock(lockPath), false);
+  assert.ok(acquireInstanceLock(lockPath));
+  assert.equal(fs.readFileSync(lockPath, 'utf8'), String(process.pid));
 
   // A dead holder is taken over.
   fs.writeFileSync(lockPath, '999999');

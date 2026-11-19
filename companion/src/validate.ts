@@ -157,7 +157,7 @@ const PATCH_KEYS = new Set(['retentionDays', 'maxWorktrees', 'chatAgent', 'chatM
 function validateSettingsPatch(value: unknown): SettingsPatch {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('patch must be an object');
   const p = value as Record<string, unknown>;
-  for (const k of Object.keys(p)) if (!PATCH_KEYS.has(k)) fail(`unknown setting ${k}`);
+  for (const k of Object.keys(p)) if (!PATCH_KEYS.has(k)) fail(`unknown setting ${JSON.stringify(k).slice(0, 64)}`);
   const out: SettingsPatch = {};
   const int = (k: 'retentionDays' | 'maxWorktrees' | 'pollActiveSeconds' | 'pollIdleSeconds', [min, max]: readonly [number, number]) => {
     if (p[k] === undefined) return;

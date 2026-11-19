@@ -42,10 +42,14 @@ public final class Workspace {
         }
     }
 
+    /// Called when a PR tab closes (the app ends that PR's agent sessions).
+    @ObservationIgnored public var onClose: ((PrKey) -> Void)?
+
     /// Closes the PR's tab; the selection moves to its neighbour, else the Inbox.
     public func close(_ pr: PrKey) {
         guard let index = tabs.firstIndex(where: { $0.id == pr.id }) else { return }
         tabs.remove(at: index)
+        onClose?(pr)
         if case let .pr(current) = selected, current.id == pr.id {
             selected = tabs.isEmpty ? .inbox : .pr(tabs[min(index, tabs.count - 1)])
         } else {

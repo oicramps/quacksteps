@@ -144,3 +144,19 @@ test('diagnostics never contain tokens', async () => {
   assert.match(text, /== doctor ==/);
   assert.doesNotMatch(text, /gh[opsu]_[A-Za-z0-9]{20,}/);
 });
+
+test('extra PATH folders inside the worktrees are refused, and saves are atomic', () => {
+  const dir = tmp();
+  const file = path.join(dir, 'config.json');
+  try {
+    const worktreeRoot = path.join(dir, 'worktrees');
+    fs.writeFileSync(file, JSON.stringify({ worktreeRoot }));
+    assert.throws(() => saveSettings({ extraPath: [path.join(worktreeRoot, 'acme', 'web', 'pr-1', 'tools')] }, file), /worktrees/);
+    assert.throws(() => saveSettings({ extraPath: [worktreeRoot] }, file), /worktrees/);
+    saveSettings({ extraPath: [path.join(dir, 'bin')] }, file);
+    assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp')), [], 'no temp file left behind');
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

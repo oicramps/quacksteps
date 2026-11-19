@@ -219,7 +219,10 @@ public final class PRStore {
         var turn = ChatTurn(id: UUID().uuidString, question: question, selections: selections, answer: "", agent: agent, model: askModel,
                             headSha: head ?? "", status: .streaming, activity: [], sessionId: nil)
         turns.append(turn)
-        let request = AppRequest.ask(agent: agent, model: askModel, pr: PrRef(pr, headSha: head), selections: selections, question: question, sessionId: previous?.sessionId)
+        // A new agent session (another agent, or the commit moved) gets the thread so far, so the answer has context.
+        let history = previous?.sessionId == nil ? Self.history(from: turns.dropLast()) : []
+        let request = AppRequest.ask(agent: agent, model: askModel, pr: PrRef(pr, headSha: head), selections: selections, question: question,
+                                     sessionId: previous?.sessionId, history: history)
         asking = Task { [weak self] in
             guard let self else { return }
             do {
@@ -252,6 +255,23 @@ public final class PRStore {
                 turn.status = .failed(code: .cancelled, message: "\(error)", fixSteps: [])
                 update(turn)
             }
+        }
+    }
+
+    /// The last finished turns as history: at most 8, answers trimmed so the prompt stays small.
+    nonisolated static func history(from turns: some Collection<ChatTurn>) -> [HistoryTurn] {
+        turns.filter { $0.status == .done && !$0.answer.isEmpty }.suffix(8).map {
+            HistoryTurn(question: $0.question, answer: $0.answer.count > 4000 ? String($0.answer.prefix(4000)) + "…" : $0.answer)
+        }
+    }
+
+    /// The tab closed: stop the agent processes kept open for this thread (the chat itself stays stored).
+    public func endSessions() {
+        stopAsking()
+        var seen = Set<String>()
+        for turn in turns {
+            guard let id = turn.sessionId, seen.insert("\(turn.agent.rawValue):\(id)").inserted else { continue }
+            model.server.post(.closeSession(agent: turn.agent, sessionId: id))
         }
     }
 

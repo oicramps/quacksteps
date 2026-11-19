@@ -3,6 +3,7 @@ import QuackClient
 import QuackProtocol
 import QuackStores
 import QuackUI
+import ServiceManagement
 import SwiftUI
 
 /// One main window, IDE style: the inbox sidebar on the left and tabs (Inbox, then one per PR) in the
@@ -43,7 +44,12 @@ private struct MainWindow: View {
                 // "Manage accounts…" opens Settings, whose first tab is Repos.
                 InboxView(model: model, workspace: workspace, openPR: { workspace.open($0) }, openSetup: { workspace.onboarded = false }, openAccounts: { openSettings() })
             } else {
-                FirstRunView(model: model) { workspace.onboarded = true }
+                FirstRunView(model: model) {
+                    workspace.onboarded = true
+                    // The spec: ask to open at login after first run, so the menu bar count and notifications
+                    // start at login. An unsigned build may be refused; Settings › Server explains the fallback.
+                    if SMAppService.mainApp.status != .enabled { try? SMAppService.mainApp.register() }
+                }
                     .frame(maxWidth: 780)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }

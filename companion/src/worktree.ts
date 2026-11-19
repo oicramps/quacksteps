@@ -145,6 +145,7 @@ export async function unlinkEscapingSymlinks(dir: string): Promise<number> {
   const res = await runGit(['-C', dir, 'ls-files', '-z', '-s'], { timeoutMs: 20_000 });
   if (res.code !== 0) throw new GitError('could not list worktree files');
   const root = path.resolve(dir);
+  const realRoot = fs.realpathSync(root);
   let removed = 0;
   for (const entry of res.stdout.split('\0')) {
     if (!entry.startsWith('120000 ')) continue;
@@ -160,7 +161,17 @@ export async function unlinkEscapingSymlinks(dir: string): Promise<number> {
       continue;
     }
     const resolved = path.resolve(path.dirname(abs), target);
-    if (resolved === root || resolved.startsWith(root + path.sep)) continue;
+    if (resolved === root || resolved.startsWith(root + path.sep)) {
+      // The path text stays inside, but the kernel follows other links on the way (`r -> ../..`, then
+      // `x -> r/../secret`). Check where it really ends up; a link that doesn't resolve goes too.
+      let real: string | null = null;
+      try {
+        real = fs.realpathSync(abs);
+      } catch {
+        real = null;
+      }
+      if (real && (real === realRoot || real.startsWith(realRoot + path.sep))) continue;
+    }
     fs.unlinkSync(abs);
     removed++;
   }
@@ -339,5 +350,46 @@ export async function enforceRetention(
     }
   }
   for (const clone of pruned) await runGit(['-C', clone, 'worktree', 'prune']);
+  return removed;
+}
+
+/**
+ * Worktrees of PRs that closed or merged go one day after closing (tech spec, Worktree policy), sooner
+ * than the age-based retention. `closedAt` looks a PR up and returns when it closed (null: still open or
+ * unknown); `skip` leaves out PRs known to be open or being reviewed, so they cost no lookup. At most
+ * `limit` lookups per run.
+ */
+export async function removeClosedWorktrees(
+  config: Config,
+  findCloneFor: (owner: string, repo: string) => Promise<string | null>,
+  closedAt: (owner: string, repo: string, prNumber: number) => Promise<string | null>,
+  skip: (owner: string, repo: string, prNumber: number) => boolean,
+  now = Date.now(),
+  limit = 20,
+): Promise<string[]> {
+  if (!fs.existsSync(config.worktreeRoot)) return [];
+  const candidates = listPrDirs(config.worktreeRoot)
+    .filter((e) => !skip(e.owner, e.repo, e.prNumber))
+    .slice(0, limit);
+  const removed: string[] = [];
+  for (const entry of candidates) {
+    let closed: string | null;
+    try {
+      closed = await closedAt(entry.owner, entry.repo, entry.prNumber);
+    } catch {
+      continue; // unknown: try again next run
+    }
+    if (!closed || now - Date.parse(closed) < DAY_MS) continue;
+    const clone = await findCloneFor(entry.owner, entry.repo);
+    const release = await acquireWrite(entry.dir);
+    try {
+      if (await removePrDir(config.worktreeRoot, entry, clone)) {
+        removed.push(entry.dir);
+        if (clone) await runGit(['-C', clone, 'worktree', 'prune']);
+      }
+    } finally {
+      release();
+    }
+  }
   return removed;
 }

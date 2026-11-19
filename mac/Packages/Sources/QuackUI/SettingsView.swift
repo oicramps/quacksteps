@@ -262,6 +262,14 @@ private struct AgentsTab: View {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(agent.label)
                                 Text(statusText(agent)).font(.caption).foregroundStyle(.secondary)
+                                if let path = agent.path, !path.isEmpty {
+                                    Text(verbatim: displayPath(path))
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .textSelection(.enabled)
+                                }
                             }
                         }
                     }

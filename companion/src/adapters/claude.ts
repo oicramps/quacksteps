@@ -1,8 +1,5 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import type { AgentStatus, FixStep } from '@quack/shared';
 import { findBinary, run } from '../exec.ts';
-import { HOME } from '../paths.ts';
 import { clip, relativeTo, runJsonLines, stripAnsi } from './stream.ts';
 import type { Adapter, AdapterEvent, AskOpts, LineParser } from './types.ts';
 
@@ -11,20 +8,20 @@ const RECHECK: FixStep = { text: 'Then press Re-check.' };
 const LOGIN: FixStep = { text: 'Log in: run Claude Code once and complete the browser sign-in, then quit it', command: 'claude' };
 
 /**
- * Claude Code has no single documented "am I logged in" command across versions,
- * so this tries `claude auth status` and falls back to where credentials live.
+ * Login state from Claude Code's own `claude auth status`, and nothing else: Quack never reads the
+ * Keychain or credential files (tech spec, Security › Credentials). An API key in the environment counts.
+ * Output that says neither way counts as not logged in, so the fix step tells you what to run.
  */
+export function parseClaudeAuthStatus(output: string, code: number): boolean {
+  const out = stripAnsi(output);
+  if (/not logged in|not authenticated|"loggedIn":\s*false/i.test(out)) return false;
+  return code === 0 && /logged in|authenticated|"loggedIn":\s*true/i.test(out);
+}
+
 async function loggedIn(bin: string): Promise<boolean> {
   if (process.env.ANTHROPIC_API_KEY) return true;
   const status = await run(bin, ['auth', 'status'], { timeoutMs: 15_000 });
-  const out = stripAnsi(status.stdout + status.stderr);
-  if (status.code === 0 && /logged in|authenticated|"loggedIn":\s*true/i.test(out) && !/not logged in/i.test(out)) return true;
-  if (/not logged in|not authenticated|"loggedIn":\s*false/i.test(out)) return false;
-  if (process.platform === 'darwin') {
-    const keychain = await run('/usr/bin/security', ['find-generic-password', '-s', 'Claude Code-credentials'], { timeoutMs: 5000 });
-    if (keychain.code === 0) return true;
-  }
-  return fs.existsSync(path.join(HOME, '.claude', '.credentials.json'));
+  return parseClaudeAuthStatus(status.stdout + status.stderr, status.code);
 }
 
 function summarizeTool(name: string, input: Record<string, unknown>, cwd: string): string | null {
@@ -159,6 +156,7 @@ export const claudeAdapter: Adapter = {
         label: 'Claude Code',
         state: 'not_installed',
         version: version.stdout.trim(),
+      path: bin,
         models: MODELS,
         fixSteps: [{ text: CLAUDE_UPDATE_TEXT, command: 'claude update' }, RECHECK],
       };
@@ -168,6 +166,7 @@ export const claudeAdapter: Adapter = {
       label: 'Claude Code',
       state: isLoggedIn ? 'ready' : 'not_logged_in',
       version: version.stdout.trim(),
+      path: bin,
       models: MODELS,
       fixSteps: isLoggedIn ? [] : [LOGIN, RECHECK],
     };

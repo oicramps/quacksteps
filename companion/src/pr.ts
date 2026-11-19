@@ -98,7 +98,7 @@ export async function prDiff(clone: string, baseSha: string, headSha: string): P
   const base = asCommitSha(baseSha);
   const head = asCommitSha(headSha);
   if (!base || !head) throw new GitError('refusing to diff a non-commit id');
-  const res = await runGit(['-C', clone, 'diff', '--no-color', `${base}...${head}`], {
+  const res = await runGit(['-C', clone, 'diff', '--no-color', '--no-ext-diff', `${base}...${head}`], {
     timeoutMs: 60_000,
     maxBuffer: 256 * 1024 * 1024,
   });

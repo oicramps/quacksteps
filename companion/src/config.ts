@@ -123,9 +123,12 @@ function readRawConfig(configFile = CONFIG_FILE): Record<string, unknown> {
   return { ...DEFAULTS };
 }
 
+/** Writes to a temp file, then renames: a crash never leaves a half-written config.json. */
 function writeRawConfig(raw: Record<string, unknown>, configFile = CONFIG_FILE): void {
   fs.mkdirSync(path.dirname(configFile), { recursive: true });
-  fs.writeFileSync(configFile, JSON.stringify(raw, null, 2) + '\n');
+  const tmp = `${configFile}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(raw, null, 2) + '\n', { mode: 0o600 });
+  fs.renameSync(tmp, configFile);
 }
 
 /** Saves an explicit `"owner/repo": "<path>"` mapping into config.json, preserving other settings. */
@@ -192,7 +195,13 @@ export function saveSettings(patch: SettingsPatch, configFile = CONFIG_FILE): vo
     if (patch.labelsModel !== undefined) labels.model = patch.labelsModel;
     raw.labels = labels;
   }
-  if (patch.extraPath !== undefined) raw.extraPath = patch.extraPath.map((p) => contractHome(path.resolve(expandHome(p))));
+  if (patch.extraPath !== undefined) {
+    const worktrees = path.resolve(loadConfig(configFile).worktreeRoot);
+    const dirs = patch.extraPath.map((p) => path.resolve(expandHome(p)));
+    // A PR can ship an executable called git or gh; never search PR worktrees for programs.
+    if (dirs.some((d) => d === worktrees || d.startsWith(worktrees + path.sep))) throw new Error('Extra PATH folders cannot be inside Quack’s worktrees.');
+    raw.extraPath = dirs.map(contractHome);
+  }
   if (patch.pollActiveSeconds !== undefined || patch.pollIdleSeconds !== undefined) {
     const poll = obj('poll');
     if (patch.pollActiveSeconds !== undefined) poll.activeSeconds = patch.pollActiveSeconds;

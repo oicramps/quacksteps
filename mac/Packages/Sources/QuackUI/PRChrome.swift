@@ -111,77 +111,45 @@ private func closedTitle(_ closed: ClosedInfo, now: Date) -> String {
 
 // MARK: - Open in Cursor and Terminal
 
-/// Cursor | Terminal: opens the review worktree, preparing it first when needed.
-public struct OpenInControl: View {
-    var store: PRStore
-    @State private var busy = false
-    @State private var note: Note?
-    @State private var showNote = false
+/// Where the worktree can be opened.
+public enum WorktreeTarget: String, Sendable {
+    case cursor = "Cursor", terminal = "Terminal"
 
-    public init(store: PRStore) { self.store = store }
+    var bundleID: String { self == .cursor ? "com.todesktop.230313mzl4w4u92" : "com.apple.Terminal" }
 
-    private struct Note: Equatable {
+    @MainActor var appURL: URL? {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) { return url }
+        let candidates = ["/Applications/\(rawValue).app", NSHomeDirectory() + "/Applications/\(rawValue).app", "/System/Applications/Utilities/\(rawValue).app"]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }.map { URL(fileURLWithPath: $0) }
+    }
+}
+
+/// Opens a PR's review worktree in Cursor or Terminal, preparing it first when needed, and holds the
+/// note popover state. The PR tab owns one so the toolbar control, the shortcuts and the palette share it.
+@MainActor @Observable
+public final class WorktreeOpener {
+    struct Note: Equatable {
         var text: String
         var canHide: Bool
     }
 
-    private enum Target: String {
-        case cursor = "Cursor", terminal = "Terminal"
+    var busy = false
+    var note: Note?
+    var showNote = false
 
-        var bundleID: String { self == .cursor ? "com.todesktop.230313mzl4w4u92" : "com.apple.Terminal" }
+    private static var shown: Set<String> = []
+    private static let hiddenKey = "worktreeNote.hidden"
 
-        @MainActor var appURL: URL? {
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) { return url }
-            let candidates = ["/Applications/\(rawValue).app", NSHomeDirectory() + "/Applications/\(rawValue).app", "/System/Applications/Utilities/\(rawValue).app"]
-            return candidates.first { FileManager.default.fileExists(atPath: $0) }.map { URL(fileURLWithPath: $0) }
-        }
+    public init() {}
+
+    func hideNoteForever() {
+        UserDefaults.standard.set(true, forKey: Self.hiddenKey)
+        showNote = false
     }
 
-    @MainActor private enum Session {
-        static var shown: Set<String> = []
-        static let hiddenKey = "worktreeNote.hidden"
-    }
-
-    public var body: some View {
-        ControlGroup {
-            Button { open(.cursor) } label: {
-                Label("Cursor", systemImage: "arrow.up.forward.app")
-            }
-            .accessibilityLabel("Open in Cursor")
-            .help("Open the worktree in Cursor")
-            Button { open(.terminal) } label: {
-                Label("Terminal", systemImage: "terminal")
-            }
-            .accessibilityLabel("Open in Terminal")
-            .help("Open the worktree in Terminal")
-        }
-        .labelStyle(.titleAndIcon)
-        .disabled(busy)
-        .popover(isPresented: $showNote, arrowEdge: .bottom) {
-            if let note {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(note.text)
-                        .font(.system(size: 12))
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack {
-                        if note.canHide {
-                            Button("Don’t show again") {
-                                UserDefaults.standard.set(true, forKey: "worktreeNote.hidden")
-                                showNote = false
-                            }
-                        }
-                        Spacer(minLength: 0)
-                        Button("OK") { showNote = false }.keyboardShortcut(.defaultAction)
-                    }
-                    .controlSize(.small)
-                }
-                .padding(14)
-                .frame(width: 280)
-            }
-        }
-    }
-
-    private func open(_ target: Target) {
+    /// Starts the review if needed, waits for the worktree, opens it, then shows the one-time note.
+    public func open(_ target: WorktreeTarget, store: PRStore) {
+        guard !busy else { return }
         busy = true
         Task {
             defer { busy = false }
@@ -206,7 +174,7 @@ public struct OpenInControl: View {
                 present(Note(text: "Couldn’t open \(target.rawValue). \(error.localizedDescription)", canHide: false))
                 return
             }
-            guard !UserDefaults.standard.bool(forKey: Session.hiddenKey), Session.shown.insert(target.rawValue).inserted else { return }
+            guard !UserDefaults.standard.bool(forKey: Self.hiddenKey), Self.shown.insert(target.rawValue).inserted else { return }
             present(Note(text: "Opened the worktree in \(target.rawValue). It’s a scratch copy at \(shortSha(review.headSha)). Edits there are discarded on the next update.", canHide: true))
         }
     }
@@ -214,6 +182,57 @@ public struct OpenInControl: View {
     private func present(_ note: Note) {
         self.note = note
         showNote = true
+    }
+}
+
+/// Cursor | Terminal: opens the review worktree, preparing it first when needed.
+public struct OpenInControl: View {
+    var store: PRStore
+    var shared: WorktreeOpener?
+    @State private var local = WorktreeOpener()
+
+    public init(store: PRStore, opener: WorktreeOpener? = nil) {
+        self.store = store
+        shared = opener
+    }
+
+    private var opener: WorktreeOpener { shared ?? local }
+
+    public var body: some View {
+        @Bindable var opener = opener
+        ControlGroup {
+            Button { opener.open(.cursor, store: store) } label: {
+                Label("Cursor", systemImage: "arrow.up.forward.app")
+            }
+            .accessibilityLabel("Open in Cursor")
+            .help("Open the worktree in Cursor (⌘⇧O)")
+            Button { opener.open(.terminal, store: store) } label: {
+                Label("Terminal", systemImage: "terminal")
+            }
+            .accessibilityLabel("Open in Terminal")
+            .help("Open the worktree in Terminal (⌘⇧T)")
+        }
+        .labelStyle(.titleAndIcon)
+        .disabled(opener.busy)
+        .popover(isPresented: $opener.showNote, arrowEdge: .bottom) {
+            if let note = opener.note {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(note.text)
+                        .font(.system(size: 12))
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        if note.canHide {
+                            Button("Don’t show again") { opener.hideNoteForever() }
+                        }
+                        Spacer(minLength: 0)
+                        Button("OK") { opener.showNote = false }.keyboardShortcut(.defaultAction)
+                    }
+                    .controlSize(.small)
+                }
+                .padding(14)
+                .frame(width: 280)
+            }
+        }
     }
 }
 

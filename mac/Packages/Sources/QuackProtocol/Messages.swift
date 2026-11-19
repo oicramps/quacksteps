@@ -83,6 +83,8 @@ public struct AgentStatus: Codable, Hashable, Sendable, Identifiable {
     public var label: String
     public var state: State
     public var version: String?
+    /// Where the CLI was found.
+    public var path: String?
     /// "" means the tool's default model.
     public var models: [String]
     public var fixSteps: [FixStep]
@@ -514,6 +516,16 @@ public enum SubscriptionTopic: Codable, Hashable, Sendable {
     }
 }
 
+/// One earlier question and answer, for a thread that moves to a new agent session.
+public struct HistoryTurn: Codable, Hashable, Sendable {
+    public var question: String
+    public var answer: String
+    public init(question: String, answer: String) {
+        self.question = question
+        self.answer = answer
+    }
+}
+
 /// An ask's PR: a PrKey plus the commit the reviewer is looking at.
 public struct PrRef: Codable, Hashable, Sendable {
     public var owner: String
@@ -540,8 +552,11 @@ public enum AppRequest: Sendable, Hashable {
     case riskLabels(PrKey, headSha: String?, rerun: Bool)
     case prDiff(PrKey, headSha: String?)
     case threads(PrKey)
-    case ask(agent: AgentId, model: String, pr: PrRef, selections: [CodeSelection], question: String, sessionId: String?)
+    /// `history`: earlier turns, sent when a thread continues on a new agent session (e.g. after switching agents).
+    case ask(agent: AgentId, model: String, pr: PrRef, selections: [CodeSelection], question: String, sessionId: String?, history: [HistoryTurn] = [])
     case cancel
+    /// The thread is over: the server can stop the agent process kept open for it. No reply.
+    case closeSession(agent: AgentId, sessionId: String)
     case shutdown
     case setupChecks
     case settings
@@ -600,7 +615,7 @@ public enum AppRequest: Sendable, Hashable {
         case let .threads(pr):
             m["type"] = "threads"
             m["pr"] = key(pr)
-        case let .ask(agent, model, pr, selections, question, sessionId):
+        case let .ask(agent, model, pr, selections, question, sessionId, history):
             m["type"] = "ask"
             m["agent"] = agent.rawValue
             m["model"] = model
@@ -619,7 +634,12 @@ public enum AppRequest: Sendable, Hashable {
             }
             m["question"] = question
             m["sessionId"] = sessionId ?? NSNull()
+            if !history.isEmpty { m["history"] = history.map { ["question": $0.question, "answer": $0.answer] } }
         case .cancel: m["type"] = "cancel"
+        case let .closeSession(agent, sessionId):
+            m["type"] = "close_session"
+            m["agent"] = agent.rawValue
+            m["sessionId"] = sessionId
         case .shutdown: m["type"] = "shutdown"
         case .setupChecks: m["type"] = "setup_checks"
         case .settings: m["type"] = "settings"

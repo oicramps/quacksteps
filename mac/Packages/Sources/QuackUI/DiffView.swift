@@ -166,9 +166,12 @@ private struct DiffWebView: NSViewRepresentable {
         func start() {
             Task { @MainActor [weak self] in
                 guard let web = self?.webView else { return }
-                if let list = await Self.blockNetworkRules() {
-                    web.configuration.userContentController.add(list)
+                // Fail closed: without the network block the renderer doesn't load at all.
+                guard let list = await Self.blockNetworkRules() else {
+                    NSLog("Quacksteps: the diff view's network block didn't compile; not loading the renderer")
+                    return
                 }
+                web.configuration.userContentController.add(list)
                 guard let index = Self.rendererIndex() else { return }
                 web.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
             }
@@ -265,7 +268,8 @@ private struct DiffWebView: NSViewRepresentable {
                 var byPath: [String: FileRisk] = [:]
                 for risk in p.labels?.files ?? [] { byPath[risk.path] = risk }
                 let payload = "{\"files\":\(filesJSON),\"labels\":\(Self.json(byPath) ?? "{}"),\"layout\":\"\(p.layout.rawValue)\",\"headSha\":\(jsLiteral(p.diff.headSha))}"
-                web.evaluateJavaScript("window.quack.render(\(payload))", completionHandler: nil)
+                // Parsed as JSON, not evaluated as an object literal: a file named "__proto__" stays a plain key.
+                web.evaluateJavaScript("window.quack.render(JSON.parse(\(jsLiteral(payload))))", completionHandler: nil)
                 // The page restores its own scroll position; a sidebar selection made before the first render still applies.
                 if diffChanged { lastScrolled = nil }
             }
