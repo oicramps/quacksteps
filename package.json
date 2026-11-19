@@ -6,7 +6,8 @@
   "workspaces": [
     "shared",
     "companion",
-    "extension"
+    "extension",
+    "mac/renderer"
   ],
   "scripts": {
     "build": "yarn workspace quack-companion build && yarn workspace @quack/extension build",
