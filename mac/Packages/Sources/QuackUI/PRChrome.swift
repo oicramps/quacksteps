@@ -329,7 +329,7 @@ public struct PRStatusBar: View {
         if let review {
             let (color, name): (Color, String) = switch review.phase {
             case .preparing: (.orange, "Preparing")
-            case .ready: (Tokens.success, "Ready")
+            case .ready: review.labels == .running ? (.orange, "Labeling…") : (Tokens.success, "Ready")
             case .stale: (Tokens.warning, "Stale")
             case .failed: (Tokens.danger, "Failed")
             }

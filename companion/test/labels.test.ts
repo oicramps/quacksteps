@@ -315,3 +315,42 @@ test('labels older than 30 days are pruned', async () => {
   assert.equal(t.runner.prune(), 1);
   assert.equal(t.runner.get(PR), undefined);
 });
+
+test('a running job publishes its progress: start time, files for the agent, and the last three agent actions', async () => {
+  const db = openDb(':memory:');
+  const tools = ['Read File a.ts', 'Read File b.ts', 'Searched repo for login', 'Read File c.ts'];
+  const adapter: Adapter = {
+    id: 'cursor',
+    label: 'Cursor',
+    isAvailable: async () => ({ id: 'cursor', label: 'Cursor', state: 'ready', models: [], fixSteps: [] }),
+    async *ask(): AsyncIterable<AdapterEvent> {
+      for (const summary of tools) yield { type: 'tool', summary };
+      yield { type: 'text', delta: reply([['a.ts', 'high', 'Auth']]) };
+    },
+  };
+  const views: LabelsView[] = [];
+  const runner = new LabelRunner({
+    db,
+    config: () => config,
+    adapters: { cursor: adapter } as Record<AgentId, Adapter>,
+    ops: {
+      findClone: async () => ({ clone: '/c', blockedRoots: [] }),
+      context: async () => ({ baseSha: 'c'.repeat(40), title: '', body: '' }),
+      numstat: async () => [entry('a.ts'), entry('yarn.lock')],
+      diff: async () => '',
+      readStart: async () => null,
+      read: async () => async () => {},
+    },
+  });
+  runner.subscribe((_pr, v) => views.push(v));
+  runner.run(PR, A);
+  await runner.idle();
+  const running = views.filter((v) => v.status === 'running' && v.progress);
+  assert.ok(running.length >= 2, 'progress is published while running');
+  const last = running.at(-1)!.progress!;
+  assert.equal(last.agentFiles, 1, 'the lockfile is labeled by a rule, so one file goes to the agent');
+  assert.deepEqual(last.activity, ['Read File b.ts', 'Searched repo for login', 'Read File c.ts']);
+  assert.ok(!Number.isNaN(Date.parse(last.startedAt)));
+  assert.equal(views.at(-1)!.status, 'ready');
+  assert.equal(views.at(-1)!.progress, undefined, 'finished labels carry no progress');
+});

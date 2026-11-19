@@ -557,7 +557,14 @@
       "model": "",
       "files": [],
       "previousHeadSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
-      "queued": true
+      "queued": false,
+      "progress": {
+        "startedAt": "2026-11-18T09:00:00.000Z",
+        "agentFiles": 12,
+        "activity": [
+          "Read File src/map.ts"
+        ]
+      }
     },
     {
       "type": "pr_diff",

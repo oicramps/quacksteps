@@ -293,7 +293,15 @@ public struct RiskLabelsMessage: Codable, Hashable, Sendable {
     public var files: [FileRisk]
     public var previousHeadSha: String?
     public var queued: Bool?
+    /// While running: when the job started, how many files go to the agent, and what it did last.
+    public var progress: Progress?
     public var error: String?
+
+    public struct Progress: Codable, Hashable, Sendable {
+        public var startedAt: String
+        public var agentFiles: Int
+        public var activity: [String]
+    }
 }
 
 public struct PrDiffFile: Codable, Hashable, Sendable, Identifiable {

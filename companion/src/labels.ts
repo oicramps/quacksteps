@@ -467,6 +467,7 @@ export class LabelRunner {
       if (active >= MAX_JOBS) break;
       if (job.started) continue;
       job.started = true;
+      job.view = { ...job.view, progress: { startedAt: this.now().toISOString(), agentFiles: 0, activity: [] } };
       active++;
       if (job.view.queued) this.update(job, { queued: undefined });
       const p = this.execute(job).finally(() => {
@@ -512,6 +513,7 @@ export class LabelRunner {
       }
 
       if (toLabel.length) {
+        this.progress(job, { agentFiles: toLabel.length, activity: ['Reading the diff'] });
         const prompt = buildLabelPrompt({ pr, title: ctx.title, body: ctx.body, all, toLabel, chunks: splitDiff(await this.ops.diff(clone, ctx.baseSha, headSha), all) });
         const result = await this.askAgent(job, dir, prompt, new Set(toLabel.map((e) => e.path)), signal);
         for (const e of toLabel) {
@@ -545,7 +547,7 @@ export class LabelRunner {
       });
       if (this.jobs.get(job.key) !== job) return;
       this.onStatus?.(pr, 'ready');
-      this.update(job, { status: 'ready', generatedAt, files, previousHeadSha: undefined, queued: undefined });
+      this.update(job, { status: 'ready', generatedAt, files, previousHeadSha: undefined, queued: undefined, progress: undefined });
     } catch (err) {
       if (job.controller.signal.aborted || this.jobs.get(job.key) !== job) return; // cancelled: someone else publishes
       const message = timeout.aborted
@@ -556,7 +558,7 @@ export class LabelRunner {
       log('labels failed', job.key, message);
       logPilot('labels_failed', { pr: job.key, ms: this.now().getTime() - started, agent, model, timeout: timeout.aborted });
       this.onStatus?.(pr, 'failed');
-      const view: LabelsView = { ...job.view, status: 'failed', error: message, queued: undefined };
+      const view: LabelsView = { ...job.view, status: 'failed', error: message, queued: undefined, progress: undefined };
       this.failures.set(job.key, view);
       this.publish(pr, view);
     } finally {
@@ -573,6 +575,8 @@ export class LabelRunner {
       let reply = '';
       for await (const ev of adapter.ask({ cwd, prompt: text, model: job.model, sessionId, signal })) {
         if (ev.type === 'text') reply += ev.delta;
+        // What the agent is doing ("Read File src/map/clusterPins.ts"), so the app can show it while it works.
+        else if (ev.type === 'tool') this.progress(job, { activity: [...(job.view.progress?.activity ?? []), ev.summary].slice(-3) });
         // Same rule as session ids from the socket: it becomes a CLI argument for the repair turn.
         else if (ev.type === 'session' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(ev.sessionId)) sessionId = ev.sessionId;
         else if (ev.type === 'error') throw new Error(`${adapter.label} failed: ${ev.message}`);
@@ -592,6 +596,12 @@ export class LabelRunner {
     } finally {
       if (sessionId) adapter.closeSession?.(sessionId);
     }
+  }
+
+  /** Updates a running job's progress and publishes it. */
+  private progress(job: Job, patch: Partial<NonNullable<LabelsView['progress']>>): void {
+    if (this.jobs.get(job.key) !== job || !job.view.progress) return;
+    this.update(job, { progress: { ...job.view.progress, ...patch } });
   }
 
   private update(job: Job, patch: Partial<LabelsView>): void {

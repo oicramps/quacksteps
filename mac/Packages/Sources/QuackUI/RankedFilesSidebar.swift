@@ -41,6 +41,11 @@ public struct RankedFilesSidebar: View {
     private var labels: RiskLabelsMessage? { store.labels }
     private var review: ReviewState? { store.review }
 
+    private var labelsAgentLabel: String {
+        let id = labels?.agent ?? store.effectiveAgent
+        return model.agents.first { $0.id == id }?.label ?? (id == .claudeCode ? "Claude Code" : "Cursor")
+    }
+
     private var labelsRunning: Bool {
         labels?.status == .running || (labels == nil && review?.labels == .running && review?.phase != .failed)
     }
@@ -232,7 +237,7 @@ public struct RankedFilesSidebar: View {
                 Button("Retry labels") { Task { await store.rerunLabels() } }
             }
         } else if labelsRunning {
-            ThinkingLine(text: labels?.queued == true ? "Two label jobs are running. Yours is next." : "Sorting the ducks by danger…")
+            LabelingProgress(labels: labels, agentLabel: labelsAgentLabel, fileCount: store.totals.files)
             if dimmed { staleNote }
         } else if dimmed {
             staleNote
@@ -275,6 +280,59 @@ public struct RankedFilesSidebar: View {
 }
 
 // MARK: - Pieces
+
+/// While labels run: what's happening, for how long, and what the agent last did. The headline rotates
+/// (design spec, "Labeling risk"); VoiceOver hears only the factual lines.
+private struct LabelingProgress: View {
+    var labels: RiskLabelsMessage?
+    var agentLabel: String
+    var fileCount: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let headlines = ["Sorting the ducks by danger…", "Lockfiles get a pass. Migrations do not.", "Reading callers before judging."]
+
+    private var title: String {
+        if labels?.queued == true { return "Two label jobs are running. Yours is next." }
+        let n = labels?.progress?.agentFiles ?? 0
+        if n > 0 { return "Ranking \(n) of \(fileCount) files with \(agentLabel)" }
+        return "Ranking \(fileCount) files with \(agentLabel)"
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let started = labels?.progress.flatMap { ISODate.parse($0.startedAt) }
+            let elapsed = started.map { max(0, context.date.timeIntervalSince($0)) }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    if reduceMotion { Text("…") } else { ProgressView().controlSize(.small) }
+                    Text(title).font(.system(size: 12, weight: .medium)).lineLimit(2)
+                    Spacer(minLength: 4)
+                    if let elapsed, labels?.queued != true {
+                        Text(verbatim: String(format: "%d:%02d", Int(elapsed) / 60, Int(elapsed) % 60))
+                            .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                if labels?.queued != true {
+                    let index = Int((elapsed ?? 0) / 3.5) % Self.headlines.count
+                    Text(Self.headlines[index])
+                        .font(QuackFont.headline(13))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    ForEach(Array((labels?.progress?.activity ?? []).enumerated()), id: \.offset) { _, line in
+                        Text(line).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Tokens.fill, in: RoundedRectangle(cornerRadius: 10))
+        }
+        .onChange(of: labels?.progress?.activity.last) { _, line in
+            if let line { AccessibilityNotification.Announcement(line).post() }
+        }
+    }
+}
 
 private struct ThinkingLine: View {
     var text: String

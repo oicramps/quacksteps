@@ -103,6 +103,20 @@ func snapshot(_ name: String, size: CGSize, @ViewBuilder _ view: () -> some View
     print("wrote", name)
 }
 
+/// Self-check: the sidebar's AppKit table should have "Everything" (row 0) selected by default.
+@MainActor
+func sidebarSelfCheck(_ view: some View) {
+    let host = NSHostingView(rootView: view.frame(width: 1120, height: 700))
+    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 1120, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = host
+    window.setFrameOrigin(CGPoint(x: -10_000, y: -10_000))
+    window.orderFront(nil)
+    RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+    func tables(_ v: NSView) -> [NSTableView] { (v as? NSTableView).map { [$0] } ?? [] + v.subviews.flatMap(tables) }
+    for (i, t) in tables(host).enumerated() { print("table \(i): rows \(t.numberOfRows), selected row \(t.selectedRow)") }
+    window.orderOut(nil)
+}
+
 MainActor.assumeIsolated {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
@@ -113,6 +127,10 @@ MainActor.assumeIsolated {
     let empty = AppModel(preview: decode(#"{"requestId":"s","fetchedAt":"\#(iso(hoursAgo: 0.01))","items":[],"events":[]}"#), connection: .connected(hello))
     let prefs = NotificationPrefs(defaults: UserDefaults(suiteName: "quack-snapshots")!)
 
+    if ProcessInfo.processInfo.environment["QUACK_SIDEBAR_CHECK"] != nil {
+        sidebarSelfCheck(InboxView(model: model, openPR: { _ in }, openSetup: {}))
+        exit(0)
+    }
     let ws = Workspace(defaults: UserDefaults(suiteName: "quack-snapshots-ws")!)
     ws.open(PrKey(owner: "acme", repo: "web", number: 4127))
     ws.open(PrKey(owner: "acme", repo: "web", number: 4131))
@@ -150,6 +168,9 @@ MainActor.assumeIsolated {
     let prReview: ReviewState = decode(#"{"startedAt":"\#(iso(hoursAgo: 1))","headSha":"\#(sha)","latestHeadSha":"\#(sha)","worktreePath":"/tmp/wt","phase":"ready","labels":"ready"}"#)
     let turn = ChatTurn(question: "What could break for trips that cross the date line?", answer: "Pins near ±180° land in different cells, so one stop can show up as **two clusters**.\n\n`cellKey` floors lng without wrapping it (clusterPins.ts:79). No test covers it.", agent: .cursor, model: "auto", headSha: sha)
     let prStore = PRStore(preview: prKey, model: model, review: prReview, labels: prLabels, diff: prDiff, turns: [turn])
+    let runningLabels: RiskLabelsMessage = decode(#"{"requestId":"l","pr":{"owner":"acme","repo":"web","number":4127},"headSha":"\#(sha)","status":"running","agent":"cursor","model":"","files":[],"progress":{"startedAt":"\#(iso(hoursAgo: 0.0117))","agentFiles":4,"activity":["Read File src/map/clusterPins.ts","Searched repo for cellKey","Read File src/map/clusterPins.test.ts"]}}"#)
+    let labeling = PRStore(preview: prKey, model: model, review: prReview, labels: runningLabels, diff: prDiff)
+    snapshot("pr-sidebar-labeling", size: CGSize(width: 320, height: 520)) { NavigationStack { RankedFilesSidebar(store: labeling, model: model) } }
     let cachedStore = PRStore(preview: prKey, model: model, review: nil, labels: prLabels, diff: prDiff)
     snapshot("pr-sidebar-cached", size: CGSize(width: 320, height: 760)) { NavigationStack { RankedFilesSidebar(store: cachedStore, model: model) } }
     snapshot("pr-sidebar", size: CGSize(width: 320, height: 640)) { NavigationStack { RankedFilesSidebar(store: prStore, model: model) } }

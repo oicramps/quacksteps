@@ -153,7 +153,7 @@ export const serverMessages: ServerMessage[] = [
       { path: 'big.json', risk: 'unlabeled', reason: 'Too big to label. Review by hand', rank: 2, source: 'rule' },
     ],
   },
-  { type: 'risk_labels', requestId: 'l1', pr, headSha: B, status: 'running', agent: 'cursor', model: '', files: [], previousHeadSha: A, queued: true },
+  { type: 'risk_labels', requestId: 'l1', pr, headSha: B, status: 'running', agent: 'cursor', model: '', files: [], previousHeadSha: A, queued: false, progress: { startedAt: '2026-11-18T09:00:00.000Z', agentFiles: 12, activity: ['Read File src/map.ts'] } },
   {
     type: 'pr_diff',
     requestId: 'd1',

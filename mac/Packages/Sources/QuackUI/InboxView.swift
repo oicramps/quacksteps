@@ -155,10 +155,10 @@ public struct InboxView: View {
 
     private var sidebar: some View {
         List(selection: $filter) {
-            Label("Everything", systemImage: "tray").badge(model.count(for: .everything)).tag(InboxFilter.everything as InboxFilter?)
-            Label("Review requests", systemImage: "person.2").badge(model.count(for: .reviewRequests)).tag(InboxFilter.reviewRequests as InboxFilter?)
-            Label("My PRs", systemImage: "arrow.triangle.branch").badge(model.count(for: .myPRs)).tag(InboxFilter.myPRs as InboxFilter?)
-            Label("Reviewing", systemImage: "eyeglasses").badge(model.count(for: .reviewing)).tag(InboxFilter.reviewing as InboxFilter?)
+            Label("Everything", systemImage: "tray").badge(model.count(for: .everything)).tag(InboxFilter.everything)
+            Label("Review requests", systemImage: "person.2").badge(model.count(for: .reviewRequests)).tag(InboxFilter.reviewRequests)
+            Label("My PRs", systemImage: "arrow.triangle.branch").badge(model.count(for: .myPRs)).tag(InboxFilter.myPRs)
+            Label("Reviewing", systemImage: "eyeglasses").badge(model.count(for: .reviewing)).tag(InboxFilter.reviewing)
             Section("Show PRs from") {
                 AccountPicker(model: model, openAccounts: openAccounts)
                     .listRowInsets(EdgeInsets(top: 2, leading: 8, bottom: 4, trailing: 8))
@@ -169,7 +169,7 @@ public struct InboxView: View {
                 Section("Repos") {
                     ForEach(model.repos, id: \.name) { repo in
                         RepoRow(model: model, name: repo.name, count: repo.count)
-                            .tag(InboxFilter.repo(repo.name) as InboxFilter?)
+                            .tag(InboxFilter.repo(repo.name))
                     }
                     if let note = hiddenReposNote {
                         Text(note)
@@ -624,7 +624,8 @@ private struct ReviewChip: View {
     var body: some View {
         switch phase {
         case .preparing: Chip("Preparing", symbol: "circle.dotted")
-        case .ready: Chip("Reviewing", symbol: "eyeglasses")
+        case .ready:
+            if review?.labels == .running { Chip("Labeling", symbol: "list.number") } else { Chip("Reviewing", symbol: "eyeglasses") }
         case .stale: Chip(newCommitsText(review), symbol: "arrow.triangle.2.circlepath", foreground: Tokens.warning, background: Tokens.medBg)
         case .failed: Chip("Couldn’t prepare", symbol: "exclamationmark.triangle", foreground: Tokens.danger, background: Tokens.highBg)
         }

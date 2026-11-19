@@ -555,6 +555,8 @@ export interface RiskLabelsMessage {
   previousHeadSha?: string;
   /** Waiting for a free label slot (the server runs at most 2 jobs at once): the spec's `server_busy`. */
   queued?: boolean;
+  /** While running: when the job started, how many files go to the agent, and what it did last. */
+  progress?: { startedAt: string; agentFiles: number; activity: string[] };
   error?: string;
 }
 
