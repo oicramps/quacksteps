@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import type { Config } from '../src/config.ts';
+import { type Config, DEFAULTS } from '../src/config.ts';
 import { enforceRetention, prRef } from '../src/worktree.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -64,6 +64,7 @@ test('retention deletes old and excess worktrees only under the worktree root', 
     fs.writeFileSync(path.join(outside, 'pr-1', 'keep.txt'), 'keep');
 
     const config: Config = {
+      ...DEFAULTS,
       scanRoots: [],
       repoPaths: {},
       worktreeRoot,

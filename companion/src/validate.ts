@@ -1,4 +1,17 @@
-import type { AskRequest, AgentId, CodeSelection, ExtensionMessage, HistoryTurn, PrRef, WorkspacePrTarget } from '@quack/shared';
+import type {
+  AgentId,
+  AppMessage,
+  AskRequest,
+  StartReviewRequest,
+  CodeSelection,
+  ExtensionMessage,
+  HistoryTurn,
+  PrKey,
+  PrRef,
+  SettingsPatch,
+  WorkspacePrTarget,
+} from '@quack/shared';
+import { LIMITS } from './config.ts';
 
 const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const REPO = /^[A-Za-z0-9._-]{1,100}$/;
@@ -114,6 +127,144 @@ function validateHistory(h: unknown): HistoryTurn[] {
     if (!turn || typeof turn !== 'object' || typeof turn.question !== 'string' || typeof turn.answer !== 'string') fail('invalid history turn');
     return { question: turn.question.slice(0, 4000), answer: turn.answer.slice(0, 8000) };
   });
+}
+
+function validatePrKey(pr: unknown): PrKey {
+  const p = pr as Partial<PrKey> | null;
+  if (!p || typeof p !== 'object') fail('pr is required');
+  if (typeof p.owner !== 'string' || !OWNER.test(p.owner)) fail('invalid owner');
+  if (typeof p.repo !== 'string' || !REPO.test(p.repo) || p.repo === '.' || p.repo === '..') fail('invalid repo');
+  if (!Number.isInteger(p.number) || (p.number as number) < 1 || (p.number as number) > 10_000_000) fail('invalid PR number');
+  return { owner: p.owner, repo: p.repo, number: p.number as number };
+}
+
+function optionalSha(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !SHA.test(value)) fail('invalid headSha');
+  return value;
+}
+
+function optionalBool(value: unknown, label: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') fail(`invalid ${label}`);
+  return value;
+}
+
+const CLIENT_VERSION = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,39}$/;
+const PATCH_KEYS = new Set(['retentionDays', 'maxWorktrees', 'chatAgent', 'chatModel', 'labelsAgent', 'labelsModel', 'extraPath', 'pollActiveSeconds', 'pollIdleSeconds']);
+
+/** Settings patches write config.json, so every key is checked and unknown keys are refused. */
+function validateSettingsPatch(value: unknown): SettingsPatch {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('patch must be an object');
+  const p = value as Record<string, unknown>;
+  for (const k of Object.keys(p)) if (!PATCH_KEYS.has(k)) fail(`unknown setting ${k}`);
+  const out: SettingsPatch = {};
+  const int = (k: 'retentionDays' | 'maxWorktrees' | 'pollActiveSeconds' | 'pollIdleSeconds', [min, max]: readonly [number, number]) => {
+    if (p[k] === undefined) return;
+    if (!Number.isInteger(p[k]) || (p[k] as number) < min || (p[k] as number) > max) fail(`${k} must be ${min}-${max}`);
+    out[k] = p[k] as number;
+  };
+  int('retentionDays', LIMITS.retentionDays);
+  int('maxWorktrees', LIMITS.maxWorktrees);
+  int('pollActiveSeconds', LIMITS.pollActiveSeconds);
+  int('pollIdleSeconds', LIMITS.pollIdleSeconds);
+  for (const k of ['chatAgent', 'labelsAgent'] as const) {
+    if (p[k] === undefined) continue;
+    if (p[k] !== null && !AGENTS.includes(p[k] as AgentId)) fail(`invalid ${k}`);
+    out[k] = p[k] as AgentId | null;
+  }
+  for (const k of ['chatModel', 'labelsModel'] as const) {
+    if (p[k] === undefined) continue;
+    if (typeof p[k] !== 'string' || !MODEL.test(p[k] as string)) fail(`invalid ${k}`);
+    out[k] = p[k] as string;
+  }
+  if (p.extraPath !== undefined) {
+    if (!Array.isArray(p.extraPath) || p.extraPath.length > 20) fail('extraPath must be a list of up to 20 folders');
+    for (const d of p.extraPath) {
+      if (typeof d !== 'string' || !/^(~|\/)/.test(d) || d.length > 1024 || /[\0\n\r:]/.test(d)) fail('extraPath entries must be absolute folders');
+    }
+    out.extraPath = p.extraPath as string[];
+  }
+  return out;
+}
+
+/**
+ * Validates a message on the server socket: every extension message, plus the socket-only (v2) ones.
+ * The stdio host keeps calling `validateMessage`, so the extension can never send socket-only messages.
+ */
+export function validateAppMessage(raw: unknown): AppMessage {
+  const m = raw as { type?: unknown; requestId?: unknown } | null;
+  if (!m || typeof m !== 'object') fail('message must be an object');
+  if (typeof m.requestId !== 'string' || !REQUEST_ID.test(m.requestId)) fail('invalid requestId');
+  const requestId = m.requestId;
+  const r = raw as Record<string, unknown>;
+  switch (m.type) {
+    case 'hello': {
+      if (r.client !== 'mac-app' && r.client !== 'cli') fail('invalid client');
+      if (typeof r.clientVersion !== 'string' || !CLIENT_VERSION.test(r.clientVersion)) fail('invalid clientVersion');
+      if (!Number.isInteger(r.protocol) || (r.protocol as number) < 1 || (r.protocol as number) > 1000) fail('invalid protocol');
+      return { type: 'hello', requestId, client: r.client, clientVersion: r.clientVersion, protocol: r.protocol as number };
+    }
+    case 'shutdown':
+    case 'unsubscribe':
+      return { type: m.type, requestId };
+    case 'subscribe': {
+      const t = r.topic;
+      if (t === 'inbox' || t === 'agents') return { type: 'subscribe', requestId, topic: t };
+      if (t && typeof t === 'object' && !Array.isArray(t) && 'pr' in t) {
+        return { type: 'subscribe', requestId, topic: { pr: validatePrKey((t as { pr: unknown }).pr) } };
+      }
+      fail('invalid topic');
+    }
+    case 'inbox':
+      return { type: 'inbox', requestId, ...(r.refresh !== undefined && { refresh: optionalBool(r.refresh, 'refresh') }) };
+    case 'start_review': {
+      const out: StartReviewRequest = { type: 'start_review', requestId, pr: validatePrKey(r.pr) };
+      if (r.agent !== undefined) {
+        if (!AGENTS.includes(r.agent as AgentId)) fail('unknown agent');
+        out.agent = r.agent as AgentId;
+      }
+      if (r.model !== undefined) {
+        if (typeof r.model !== 'string' || !MODEL.test(r.model)) fail('invalid model');
+        out.model = r.model;
+      }
+      return out;
+    }
+    case 'stop_review':
+      return {
+        type: 'stop_review',
+        requestId,
+        pr: validatePrKey(r.pr),
+        ...(r.removeWorktree !== undefined && { removeWorktree: optionalBool(r.removeWorktree, 'removeWorktree') }),
+      };
+    case 'setup_checks':
+    case 'settings':
+    case 'prune_worktrees':
+    case 'diagnostics':
+      return { type: m.type, requestId };
+    case 'save_settings':
+      return { type: 'save_settings', requestId, patch: validateSettingsPatch(r.patch) };
+    case 'update_review':
+    case 'threads':
+      return { type: m.type, requestId, pr: validatePrKey(r.pr) };
+    case 'risk_labels':
+      return {
+        type: 'risk_labels',
+        requestId,
+        pr: validatePrKey(r.pr),
+        ...(r.headSha !== undefined && { headSha: optionalSha(r.headSha) }),
+        ...(r.rerun !== undefined && { rerun: optionalBool(r.rerun, 'rerun') }),
+      };
+    case 'pr_diff':
+      return {
+        type: 'pr_diff',
+        requestId,
+        pr: validatePrKey(r.pr),
+        ...(r.headSha !== undefined && { headSha: optionalSha(r.headSha) }),
+      };
+    default:
+      return validateMessage(raw);
+  }
 }
 
 /** Validates and sanitizes an incoming JSON payload from the extension. Throws `ValidationError` on invalid input. */

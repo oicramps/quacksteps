@@ -6,6 +6,13 @@ export const QUACK_VERSION = '0.2.6';
  */
 export const PROTOCOL_VERSION = 1;
 
+/**
+ * Protocol spoken on the server's Unix socket (the Mac app). A superset of
+ * PROTOCOL_VERSION: every v1 message keeps its shape. Kept separate because the
+ * extension requires an exact PROTOCOL_VERSION match on the stdio host.
+ */
+export const SOCKET_PROTOCOL_VERSION = 2;
+
 export const HOST_NAME = 'com.quack.companion';
 
 /**

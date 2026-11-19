@@ -42,11 +42,15 @@
     "prune": "node dist/quack-companion.cjs prune",
     "doctor": "node dist/quack-companion.cjs doctor",
     "harness": "yarn build && node scripts/harness.mjs",
+    "compile": "bun scripts/compile.ts",
     "test": "node --import ./test/register-swift.js --test test/*.test.ts",
-    "typecheck": "tsc -p ."
+    "test:bun": "bun test --preload ./test/bun-preload.ts test/",
+    "typecheck": "tsc -p .",
+    "fixtures": "node scripts/fixtures.ts"
   },
   "devDependencies": {
     "@quack/shared": "0.2.0",
+    "@types/bun": "1.3.0",
     "@types/node": "^22.10.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.8.0"

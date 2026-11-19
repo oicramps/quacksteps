@@ -4,10 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { MessageDecoder, encodeMessage } from '../src/framing.ts';
-import { isAllowedOrigin } from '../src/host.ts';
+import { isAllowedOrigin } from '../src/stdio.ts';
 import { install, nativeMessagingHostDirs, selectInstallHostDirs, uninstall } from '../src/install.ts';
 import { buildCiPrompt, buildFollowUp, buildPrompt } from '../src/prompt.ts';
-import { hasConfigFile } from '../src/config.ts';
+import { DEFAULTS, hasConfigFile } from '../src/config.ts';
 import { contractHome } from '../src/paths.ts';
 import { findCloneWithDiagnostics, inspectWorkspace, linkClone, parseGitHubRemote, saveWorkspace } from '../src/repo.ts';
 import { fileAnchor } from '../src/selection.ts';
@@ -199,7 +199,7 @@ test('findCloneWithDiagnostics follows symlinks, trusts SSH-alias repoPaths, and
     makeGitStub(wrongRepo, 'git@github.com:someone/else.git');
     fs.chmodSync(blocked, 0o000);
 
-    const baseCfg = { scanRoots: [blocked, scan], repoPaths: {}, worktreeRoot: path.join(root, 'wt'), retentionDays: 7, maxWorktrees: 20 };
+    const baseCfg = { ...DEFAULTS, scanRoots: [blocked, scan], repoPaths: {}, worktreeRoot: path.join(root, 'wt'), retentionDays: 7, maxWorktrees: 20 };
 
     // Follows symlink under scanRoots.
     const viaSymlink = await findCloneWithDiagnostics(baseCfg, 'polarsteps', 'igloo');

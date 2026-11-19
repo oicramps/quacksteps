@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { RepoOverrideCheck, RootCheck, WorkspacePrTarget, WorkspaceSaveRequest, WorkspaceStatus } from '@quack/shared';
+import type { FixStep, RepoOverrideCheck, RootCheck, WorkspacePrTarget, WorkspaceSaveRequest, WorkspaceStatus } from '@quack/shared';
 import { CONFIG_FILE, contractHome, expandHome } from './paths.ts';
 import { type Config, hasConfigFile, loadConfig, saveWorkspaceConfig, setRepoPath } from './config.ts';
 import { runGit } from './exec.ts';
@@ -113,6 +113,47 @@ export interface CloneSearchResult {
   clone: string | null;
   blockedRoots: string[];
   overrideIssue?: string;
+}
+
+/**
+ * Explains a missing clone with fix steps. `who` is the process that needs folder access:
+ * Chrome for the extension's host, Quacksteps for the server.
+ */
+export function cloneNotFound(
+  config: Config,
+  pr: { owner: string; repo: string },
+  blockedRoots: string[],
+  overrideIssue: string | undefined,
+  who: 'browser' | 'server',
+): { message: string; fixSteps: FixStep[] } {
+  const blocked = blockedRoots.map(contractHome);
+  const reader = who === 'browser' ? 'Your browser does' : 'Quacksteps does';
+  const message = overrideIssue
+    ? overrideIssue
+    : blocked.length
+      ? `Could not find ${pr.owner}/${pr.repo}. ${reader} not have permission to read ${blocked.join(', ')}.`
+      : `Could not find a local clone of ${pr.owner}/${pr.repo} in your scanned folders.`;
+  const fixSteps: FixStep[] = [];
+  if (blocked.length) {
+    fixSteps.push({
+      text:
+        who === 'browser'
+          ? `Allow your browser to read ${blocked.join(', ')} in System Settings → Privacy & Security → Files and Folders, restart the browser, then click Retry.`
+          : `Allow Quacksteps to read ${blocked.join(', ')} in System Settings → Privacy & Security → Files and Folders, then press Retry.`,
+    });
+  }
+  const cloneRoot = config.scanRoots.map(contractHome).find((r) => !r.startsWith('~/Documents') && !blocked.includes(r)) ?? '~/Projects';
+  fixSteps.push(
+    {
+      text: 'Already cloned elsewhere? Run this with your clone’s path (or set "repoPaths" in ~/.quack/config.json), then click Retry:',
+      command: `~/.quack/bin/quack-companion link /path/to/${pr.repo} ${pr.owner}/${pr.repo}`,
+    },
+    {
+      text: `Not cloned yet? Clone it into ${cloneRoot} (or any folder in "scanRoots" in ~/.quack/config.json):`,
+      command: `git clone git@github.com:${pr.owner}/${pr.repo}.git ${cloneRoot}/${pr.repo}`,
+    },
+  );
+  return { message, fixSteps };
 }
 
 const cache = new Map<string, string>();
