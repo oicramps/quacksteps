@@ -41,6 +41,11 @@ public struct RankedFilesSidebar: View {
     private var labels: RiskLabelsMessage? { store.labels }
     private var review: ReviewState? { store.review }
 
+    private var labellerText: String {
+        guard let labels else { return labelsAgentLabel }
+        return labels.model.isEmpty ? labelsAgentLabel : "\(labelsAgentLabel) · \(labels.model)"
+    }
+
     private var labelsAgentLabel: String {
         let id = labels?.agent ?? store.effectiveAgent
         return model.agents.first { $0.id == id }?.label ?? (id == .claudeCode ? "Claude Code" : "Cursor")
@@ -119,7 +124,7 @@ public struct RankedFilesSidebar: View {
 
     private func rows(_ group: Group) -> some View {
         ForEach(group.rows) { row in
-            FileRow(row: row, loading: labelsRunning && mode == .flat)
+            FileRow(row: row, loading: labelsRunning && mode == .flat, labeller: labellerText)
                 .opacity(dimmed ? 0.55 : 1)
                 .tag(row.id)
         }
@@ -387,6 +392,8 @@ private struct PreparingChecklist: View {
 private struct FileRow: View {
     var row: RankedFilesSidebar.Row
     var loading: Bool
+    /// "Cursor · auto": who ranked the list, for the tooltip.
+    var labeller: String = "the agent"
 
     private var displayName: String {
         if let old = row.file.oldPath, old != row.file.path {
@@ -411,37 +418,87 @@ private struct FileRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             RiskBars(row.risk?.risk).padding(.top, 3)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(displayName)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 4)
-                    LineCounts(row.file.additions, row.file.deletions)
-                        .font(.system(size: 11, design: .monospaced))
-                        .fixedSize()
+            VStack(alignment: .leading, spacing: 3) {
+                // Name and folder share a line when they fit: the folder drops whole folders from the front
+                // ("src/travel-book/map/" → "…/travel-book/map/" → "…/map/"). When even the shortest form doesn't
+                // fit beside the name, the folder gets its own small line, so same-named files stay apart.
+                ViewThatFits(in: .horizontal) {
+                    ForEach(folderForms, id: \.self) { form in
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            nameText.fixedSize()
+                            folderText(form)
+                            Spacer(minLength: 4)
+                            counts
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            nameText
+                            Spacer(minLength: 4)
+                            counts
+                        }
+                        if let full = folderForms.first {
+                            folderText(full).truncationMode(.head)
+                        }
+                    }
                 }
-                Text(row.folder)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.head)
+                // The reason is the point of the ranking: its own line, readable, set apart from the path.
                 if let reason = row.risk?.reason, !reason.isEmpty {
                     HStack(alignment: .firstTextBaseline, spacing: 5) {
                         Text(reason)
-                            .font(.caption)
+                            .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                         if isRule { RuleTag() }
                     }
+                    .padding(.top, 1)
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 3)
+        .help(tooltip)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.name), \(riskWord)")
         .accessibilityValue(spokenValue)
+    }
+
+    private var nameText: some View {
+        Text(displayName)
+            .fontWeight(.medium)
+            .lineLimit(1)
+            .truncationMode(.middle)
+    }
+
+    private var counts: some View {
+        LineCounts(row.file.additions, row.file.deletions)
+            .font(.system(size: 11, design: .monospaced))
+            .fixedSize()
+    }
+
+    private func folderText(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 10.5, design: .monospaced))
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+    }
+
+    /// "src/travel-book/map/", "…/travel-book/map/", "…/map/": each a little shorter, whole folders only.
+    private var folderForms: [String] {
+        let parts = row.folder.split(separator: "/").map(String.init)
+        guard !parts.isEmpty else { return [] }
+        return (0..<parts.count).map { drop in
+            let kept = parts[drop...].joined(separator: "/") + "/"
+            return drop == 0 ? kept : "…/" + kept
+        }
+    }
+
+    /// Hover: the full path, the whole reason, and who labelled it.
+    private var tooltip: String {
+        var lines = [row.file.oldPath.map { "\($0) → \(row.file.path)" } ?? row.file.path]
+        if let reason = row.risk?.reason, !reason.isEmpty { lines.append(reason) }
+        if row.risk != nil { lines.append(isRule ? "Labelled by a rule" : "Labelled by \(labeller)") }
+        return lines.joined(separator: "\n")
     }
 
     private var riskWord: String {

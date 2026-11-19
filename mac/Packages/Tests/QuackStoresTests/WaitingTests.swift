@@ -17,6 +17,10 @@ import Testing
     #expect(WaitFormat.short(3 * 3600) == "3h")
     #expect(WaitFormat.short(2 * 86400 + 5 * 3600) == "2d 5h")
     #expect(WaitFormat.short(5 * 86400) == "5d")
+    #expect(WaitFormat.short(6 * 86400 + 23 * 3600) == "6d 23h", "under a week stays exact")
+    #expect(WaitFormat.short(7 * 86400 + 21 * 3600) == "7d", "from a week, whole days")
+    #expect(WaitFormat.short(226 * 86400 + 5 * 3600) == "226d")
+    #expect(WaitFormat.spoken(226 * 86400 + 5 * 3600) == "226 days 5 hours", "VoiceOver keeps the exact time")
     #expect(WaitFormat.spoken(86400 + 6 * 3600) == "1 day 6 hours")
 }
 

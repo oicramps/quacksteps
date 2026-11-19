@@ -28,13 +28,15 @@ public enum WaitLevel: Int, Sendable, Comparable {
 }
 
 public enum WaitFormat {
-    /// Exact, tabular durations: "25m", "6h 12m", "3h", "2d 5h", "5d".
+    /// Short, tabular durations: "25m", "6h 12m", "3h", "2d 5h". From a week on, whole days ("13d", "226d"):
+    /// hours are noise there, and the column stays one line. VoiceOver gets the exact `spoken` form.
     public static func short(_ seconds: TimeInterval) -> String {
         let minutes = max(0, Int(seconds / 60))
         if minutes < 60 { return "\(minutes)m" }
         let hours = minutes / 60
         if hours < 24 { return minutes % 60 == 0 ? "\(hours)h" : "\(hours)h \(minutes % 60)m" }
         let days = hours / 24
+        if days >= 7 { return "\(days)d" }
         return hours % 24 == 0 ? "\(days)d" : "\(days)d \(hours % 24)h"
     }
 

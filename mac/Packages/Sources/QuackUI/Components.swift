@@ -41,6 +41,9 @@ public struct WaitTimer: View {
                 Image(systemName: level.usesHourglass ? "hourglass" : "clock").imageScale(.small)
                 Text(WaitFormat.short(waited)).monospacedDigit()
             }
+            // Never wraps: a long wait grows into the space on its left instead of breaking the line.
+            .lineLimit(1)
+            .fixedSize()
             .font(.system(size: size, weight: level.usesHourglass ? .semibold : .medium))
             .foregroundStyle(Self.color(level))
             .accessibilityElement(children: .ignore)

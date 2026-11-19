@@ -29,7 +29,8 @@ func item(_ n: Int, _ repo: String, _ title: String, _ author: String, role: Str
 }
 
 let items = [
-    item(4131, "web", "Bump vite to 6.2", "bram-dewit", role: "reviewer", adds: 12, dels: 12, ci: "passing", hours: 98, review: "stale"),
+    item(4131, "web", "Bump vite to 6.2", "bram-dewit", role: "reviewer", adds: 12, dels: 12, ci: "passing", hours: 226 * 24 + 5, review: "stale"),
+    item(4100, "web", "Archive old trips in bulk", "bram-dewit", role: "reviewer", adds: 40, dels: 2, ci: "passing", hours: 170 * 24 + 22),
     item(4127, "web", "Trip map: cluster pins at low zoom", "noor-haddad", role: "reviewer", adds: 412, dels: 88, ci: "passing", hours: 53, review: "ready", stack: #"{"position":1,"size":2}"#),
     item(4129, "web", "Trip map: tap a cluster to expand it", "noor-haddad", role: "reviewer", adds: 64, dels: 9, ci: "passing", hours: 3.67, stack: #"{"position":2,"size":2,"parent":{"number":4127,"title":"Trip map: cluster pins at low zoom"}}"#),
     item(882, "api", "Rate-limit photo uploads per traveller", "joris-vandalen", role: "reviewer", adds: 156, dels: 20, ci: "pending", hours: 6.2, via: "team", team: "backend", approvedBy: "sven-aaltonen"),
@@ -171,6 +172,18 @@ MainActor.assumeIsolated {
     let runningLabels: RiskLabelsMessage = decode(#"{"requestId":"l","pr":{"owner":"acme","repo":"web","number":4127},"headSha":"\#(sha)","status":"running","agent":"cursor","model":"","files":[],"progress":{"startedAt":"\#(iso(hoursAgo: 0.0117))","agentFiles":4,"activity":["Read File src/map/clusterPins.ts","Searched repo for cellKey","Read File src/map/clusterPins.test.ts"]}}"#)
     let labeling = PRStore(preview: prKey, model: model, review: prReview, labels: runningLabels, diff: prDiff)
     snapshot("pr-sidebar-labeling", size: CGSize(width: 320, height: 520)) { NavigationStack { RankedFilesSidebar(store: labeling, model: model) } }
+    let deepFiles: [(String, String, String, Int, Int)] = [
+        ("src/travel-book/map/TravelBookMapInner.tsx", "high", "Core map, route and readiness orchestration; no unit tests", 152, 0),
+        ("src/utils/use-add-poster-route-to-map.ts", "high", "Shared poster hook; new fallback path lightly tested", 12, 3),
+        ("src/travel-book/map/TravelBookStepMarkers.tsx", "medium", "Marker readiness gating can block the printer", 119, 0),
+        ("src/travel-book/map/flights/TravelBookStepMarkers.tsx", "medium", "Same name, different folder: flight markers", 65, 0),
+        ("src/travel-book/map/utils/get-trip-flight-segment-buckets.ts", "medium", "Complex flight bucketing can throw; covered by tests", 87, 0),
+        ("package.json", "low", "Version bump", 1, 1),
+    ]
+    let deepDiff: PrDiffMessage = decode(#"{"requestId":"d","pr":{"owner":"acme","repo":"web","number":4127},"baseSha":"b","headSha":"\#(sha)","files":[\#(deepFiles.map { #"{"path":"\#($0.0)","status":"modified","additions":\#($0.3),"deletions":\#($0.4),"binary":false,"truncated":false}"# }.joined(separator: ","))]}"#)
+    let deepLabels: RiskLabelsMessage = decode(#"{"requestId":"l","pr":{"owner":"acme","repo":"web","number":4127},"headSha":"\#(sha)","status":"ready","agent":"cursor","model":"auto","files":[\#(deepFiles.enumerated().map { #"{"path":"\#($1.0)","risk":"\#($1.1)","reason":"\#($1.2)","rank":\#($0),"source":"agent"}"# }.joined(separator: ","))]}"#)
+    let deepStore = PRStore(preview: prKey, model: model, review: prReview, labels: deepLabels, diff: deepDiff)
+    snapshot("pr-sidebar-deep", size: CGSize(width: 320, height: 640)) { NavigationStack { RankedFilesSidebar(store: deepStore, model: model) } }
     let cachedStore = PRStore(preview: prKey, model: model, review: nil, labels: prLabels, diff: prDiff)
     snapshot("pr-sidebar-cached", size: CGSize(width: 320, height: 760)) { NavigationStack { RankedFilesSidebar(store: cachedStore, model: model) } }
     snapshot("pr-sidebar", size: CGSize(width: 320, height: 640)) { NavigationStack { RankedFilesSidebar(store: prStore, model: model) } }
