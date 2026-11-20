@@ -29,6 +29,8 @@ public struct InboxView: View {
     @FocusState private var inboxSearchFocused: Bool
     /// Bumped to focus the PR tab's ranked-files filter.
     @State private var filterFocusRequest = 0
+    /// Stacks the user opened or closed. Others follow the default: review requests open, my PRs closed.
+    @State private var stackExpanded: [String: Bool] = [:]
 
     public init(model: AppModel, workspace: Workspace? = nil, openPR: @escaping (PrKey) -> Void, openSetup: @escaping () -> Void, openAccounts: @escaping () -> Void = {}) {
         self.model = model
@@ -295,9 +297,7 @@ public struct InboxView: View {
                     // Requests waiting on me first; those someone else already approved after, under their own heading.
                     let waiting = reviews.filter { $0.reviewer?.isApprovedByOthers != true }
                     let approved = reviews.filter { $0.reviewer?.isApprovedByOthers == true }
-                    ForEach(waiting) { item in
-                        ReviewRow(item: item).tag(item.id)
-                    }
+                    entries(waiting)
                     if !approved.isEmpty {
                         HStack(spacing: 6) {
                             Text("Approved by someone else").font(.system(size: 11, weight: .semibold))
@@ -310,13 +310,11 @@ public struct InboxView: View {
                         .padding(.top, waiting.isEmpty ? 0 : 10)
                         .selectionDisabled()
                         .accessibilityAddTraits(.isHeader)
-                        ForEach(approved) { item in
-                            ReviewRow(item: item).tag(item.id)
-                        }
+                        entries(approved)
                     }
                     if moreReviews > 0 { moreRow(moreReviews, url: "https://github.com/pulls/review-requested") }
                 } header: {
-                    sectionHeader("Review requests", count: counts.reviews, note: "Longest wait first")
+                    sectionHeader("Review requests", count: counts.reviews, note: "Longest wait first", waitTitle: "WAIT")
                 }
             }
             if emptyMine, let scope {
@@ -328,12 +326,10 @@ public struct InboxView: View {
             }
             if !mine.isEmpty || moreMine > 0 {
                 Section {
-                    ForEach(mine) { item in
-                        MyPRRow(item: item).tag(item.id)
-                    }
+                    entries(mine)
                     if moreMine > 0 { moreRow(moreMine, url: "https://github.com/pulls") }
                 } header: {
-                    sectionHeader("My PRs", count: counts.mine, note: nil)
+                    sectionHeader("My PRs", count: counts.mine, note: nil, waitTitle: "IN STATE")
                 }
             }
         }
@@ -351,16 +347,53 @@ public struct InboxView: View {
                 Button("Copy link") { copyToPasteboard(item.pr.githubURL.absoluteString) }
             }
         } primaryAction: { ids in
-            if ids.count == 1, let item = model.items.first(where: { $0.id == ids.first }) { openPR(item.pr) }
+            guard ids.count == 1, let id = ids.first else { return }
+            if let item = model.items.first(where: { $0.id == id }) { openPR(item.pr) }
+            else if id.hasPrefix("stack:") { toggleStack(id) }  // Return or double-click on a stack opens or closes it
         }
     }
 
-    private func sectionHeader(_ title: String, count: (shown: Int, total: Int), note: String?) -> some View {
-        HStack(spacing: 6) {
+    /// Rows for one run of PRs: stacks grouped into a tree, the rest as they are.
+    @ViewBuilder private func entries(_ items: [InboxItem]) -> some View {
+        ForEach(InboxEntry.group(items)) { entry in
+            switch entry {
+            case let .item(item):
+                row(item, lane: nil).tag(item.id)
+            case let .stack(group):
+                let open = isExpanded(group)
+                StackHeaderRow(group: group, expanded: open) { toggleStack(group.id) }.tag(group.id)
+                if open {
+                    ForEach(Array(group.items.enumerated()), id: \.element.id) { index, item in
+                        row(item, lane: index == group.items.count - 1).tag(item.id)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func row(_ item: InboxItem, lane isLast: Bool?) -> some View {
+        switch item.role {
+        case .reviewer: ReviewRow(item: item, treeLast: isLast)
+        case .author: MyPRRow(item: item, treeLast: isLast)
+        }
+    }
+
+    private func isExpanded(_ group: StackGroup) -> Bool {
+        stackExpanded[group.id] ?? (group.items.first?.role == .reviewer)
+    }
+
+    private func toggleStack(_ id: String) {
+        let current = stackExpanded[id] ?? id.hasPrefix("stack:reviewer:")
+        withAnimation(.easeOut(duration: 0.18)) { stackExpanded[id] = !current }
+    }
+
+    private func sectionHeader(_ title: String, count: (shown: Int, total: Int), note: String?, waitTitle: String = "WAIT") -> some View {
+        HStack(spacing: 8) {
             Text(title).font(.system(size: 13, weight: .semibold))
             Text(count.shown < count.total ? "\(count.shown) of \(count.total)" : "\(count.shown)").monospacedDigit().foregroundStyle(.secondary)
+            if let note { Text(note).font(.system(size: 11)).foregroundStyle(.secondary).padding(.leading, 4) }
             Spacer()
-            if let note { Text(note).font(.system(size: 11)).foregroundStyle(.secondary) }
+            if count.total > 0 { BoardColumnHeaders(waitTitle: waitTitle) }
         }
         .textCase(nil)
         .foregroundStyle(.primary)
@@ -530,28 +563,12 @@ private struct RepoRow: View {
     }
 }
 
-private struct Quip: View {
-    var since: Date
-    var text: (WaitLevel) -> String?
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            if let line = text(waitLevel(since: since, now: context.date)) {
-                Text(line)
-                    .font(.system(size: 11).italic())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: 190, alignment: .trailing)
-                    .accessibilityHidden(true)
-            }
-        }
-    }
-}
-
+/// A review request: avatar (or the tree lane inside a stack), title, caption with tags, board columns.
 private struct ReviewRow: View {
     var item: InboxItem
+    /// Inside an open stack: nil for a plain row, else whether it's the stack's last PR.
+    var treeLast: Bool? = nil
 
-    private var requestedAt: Date { item.reviewer.flatMap { ISODate.parse($0.requestedAt) } ?? Date() }
     private var approvedBy: [String]? { item.reviewer?.isApprovedByOthers == true ? item.reviewer?.approvedBy : nil }
 
     /// "Approved by noor", "Approved by noor +1".
@@ -561,48 +578,57 @@ private struct ReviewRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Avatar(item.authorLogin, size: 24)
+            if let treeLast { TreeLane(isLast: treeLast) } else { Avatar(item.authorLogin, size: 24) }
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                caption
+                HStack(spacing: 6) {
+                    Text(caption).lineLimit(1).layoutPriority(-1)
+                    tags
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if let stack = item.stack { StackChip(stack) }
-            if let approvers = approvedBy { Chip(approvedLabel(approvers), symbol: "checkmark", foreground: Tokens.success, background: Tokens.greenBg) }
-            if let review = item.review { ReviewChip(phase: review.phase, review: review) }
-            CIGlyph(item.ci)
-            // Someone else approved: the wait isn't owed by you, so no quip and no urgency colour.
-            if approvedBy == nil { Quip(since: requestedAt) { Quips.reviewRequest($0) } }
-            WaitTimer(since: requestedAt)
-                .frame(width: 74, alignment: .trailing)
+            BoardCells(key: item.id, ci: item.ci, lines: item.changedLines, since: item.waitingSince,
+                       status: { item.boardStatus(now: $0) })
         }
         .opacity(approvedBy == nil ? 1 : 0.7)
         .padding(.vertical, 4)
         .contentShape(Rectangle())
+        .help("+\(item.additions) −\(item.deletions)")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(item.title), by \(item.authorLogin), \(item.pr.repo) \(item.pr.number)")
         .accessibilityValue(value)
     }
 
-    private var caption: some View {
-        HStack(spacing: 0) {
-            Text(captionText)
-            LineCounts(item.additions, item.deletions)
+    @ViewBuilder private var tags: some View {
+        if let stack = item.stack, treeLast == nil { BoardTag(text: "Stack \(stack.position)/\(stack.size)", kind: stack.position > 1 ? .accent : .plain) }
+        if let approvers = approvedBy { BoardTag(text: approvedLabel(approvers), kind: .green) }
+        switch item.review?.phase {
+        case .preparing: BoardTag(text: "Preparing")
+        case .ready: BoardTag(text: item.review?.labels == .running ? "Labeling" : "Reviewing")
+        case .stale: BoardTag(text: newCommitsText(item.review), kind: .orange)
+        case .failed: BoardTag(text: "Couldn’t prepare", kind: .red)
+        case nil: EmptyView()
         }
-        .font(.system(size: 11))
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
     }
 
-    private var captionText: String {
+    private var caption: String {
+        // Inside a stack the repo and author are on the stack's row; the PR number and base remain.
+        if treeLast != nil {
+            if let parent = item.stack?.parent { return "#\(item.pr.number) · on top of #\(parent.number)" }
+            return "#\(item.pr.number) · into \(item.baseRef)"
+        }
         var text = "\(item.pr.repo) #\(item.pr.number) · \(item.authorLogin)"
         if item.reviewer?.via == .team, let team = item.reviewer?.team { text += " · via @\(team)" }
         if let parent = item.stack?.parent { text += " · on top of #\(parent.number)" }
-        return text + " · "
+        return text
     }
 
     private var value: String {
-        var parts = ["Waiting \(WaitFormat.spoken(Date().timeIntervalSince(requestedAt)))."]
+        var parts: [String] = []
+        if let since = item.waitingSince { parts.append("Waiting \(WaitFormat.spoken(Date().timeIntervalSince(since))), \(item.boardStatus().word.lowercased()).") }
+        parts.append("\(PRSize(lines: item.changedLines).rawValue), \(item.additions) added, \(item.deletions) removed.")
         if let approvers = approvedBy { parts.append("\(approvedLabel(approvers)), not waiting on you.") }
         if let spoken = item.stack?.spoken { parts.append(spoken) }
         switch item.review?.phase {
@@ -617,73 +643,60 @@ private struct ReviewRow: View {
     }
 }
 
-private struct ReviewChip: View {
-    var phase: ReviewState.Phase
-    var review: ReviewState? = nil
-
-    var body: some View {
-        switch phase {
-        case .preparing: Chip("Preparing", symbol: "circle.dotted")
-        case .ready:
-            if review?.labels == .running { Chip("Labeling", symbol: "list.number") } else { Chip("Reviewing", symbol: "eyeglasses") }
-        case .stale: Chip(newCommitsText(review), symbol: "arrow.triangle.2.circlepath", foreground: Tokens.warning, background: Tokens.medBg)
-        case .failed: Chip("Couldn’t prepare", symbol: "exclamationmark.triangle", foreground: Tokens.danger, background: Tokens.highBg)
-        }
-    }
-}
-
+/// One of my PRs: the coloured state tile on the left carries the state; the status word says how it's going.
 private struct MyPRRow: View {
     var item: InboxItem
+    var treeLast: Bool? = nil
 
     private var state: AuthorState? { item.author?.state }
-    private var since: Date { item.author.flatMap { ISODate.parse($0.since) } ?? Date() }
     private var isDraft: Bool { state == nil }
 
     var body: some View {
         HStack(spacing: 12) {
-            StatusTile(state)
+            if let treeLast { TreeLane(isLast: treeLast) } else { StatusTile(state) }
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text(caption).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(caption).lineLimit(1).layoutPriority(-1)
+                    if let stack = item.stack, treeLast == nil { BoardTag(text: "Stack \(stack.position)/\(stack.size)", kind: stack.position > 1 ? .accent : .plain) }
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if let stack = item.stack { StackChip(stack) }
-            Chip(state: state)
-            CIGlyph(item.ci)
-            if let state {
-                Quip(since: since) { Quips.author(state, $0) }
-                WaitTimer(since: since).frame(width: 74, alignment: .trailing)
-            } else {
-                Text("—").foregroundStyle(.secondary).frame(width: 74, alignment: .trailing).accessibilityHidden(true)
-            }
+            BoardCells(key: item.id, ci: item.ci, lines: item.changedLines, since: item.waitingSince,
+                       status: { item.boardStatus(now: $0) })
         }
         .padding(.vertical, 4)
         .opacity(isDraft ? 0.7 : 1)
         .contentShape(Rectangle())
+        .help("+\(item.additions) −\(item.deletions)")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(item.title)
         .accessibilityValue(value)
     }
 
     private var caption: String {
-        var base = "\(item.pr.repo) #\(item.pr.number)"
-        if let parent = item.stack?.parent { base += " · on top of #\(parent.number)" }
+        var base = treeLast != nil ? "#\(item.pr.number)" : "\(item.pr.repo) #\(item.pr.number)"
+        if let parent = item.stack?.parent { base += " · on top of #\(parent.number)" } else if treeLast != nil { base += " · into \(item.baseRef)" }
         if isDraft { return "\(base) · Draft" }
         let reasons = item.author?.reasons ?? []
         return reasons.isEmpty ? base : "\(base) · \(reasons.joined(separator: " · "))"
     }
 
     private var value: String {
-        guard let state else { return ([item.stack?.spoken, "Draft."].compactMap { $0 }).joined(separator: " ") }
+        let size = "\(PRSize(lines: item.changedLines).rawValue), \(item.additions) added, \(item.deletions) removed."
+        guard let state, let since = item.waitingSince else { return ([item.stack?.spoken, "Draft.", size].compactMap { $0 }).joined(separator: " ") }
         let spoken = WaitFormat.spoken(Date().timeIntervalSince(since))
         var parts: [String] = []
         if let spoken = item.stack?.spoken { parts.append(spoken) }
         switch state {
         case .waitingOnMe: parts.append("Waiting on you for \(spoken).")
-        case .waitingOnReviewers: parts.append("Waiting on reviewers for \(spoken).")
+        case .waitingOnReviewers: parts.append("Waiting on reviewers for \(spoken), \(item.boardStatus().word.lowercased()).")
         case .blockedByCI: parts.append("Blocked by CI for \(spoken).")
         case .readyToMerge: parts.append("Ready to merge for \(spoken).")
         }
+        parts.append(size)
         if let reasons = item.author?.reasons, !reasons.isEmpty { parts.append(reasons.joined(separator: ", ") + ".") }
         if item.ci != .none { parts.append("Checks \(item.ci.rawValue).") }
         return parts.joined(separator: " ")
