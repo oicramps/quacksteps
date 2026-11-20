@@ -206,7 +206,8 @@ public struct ChatInspector: View {
                 } else {
                     Button { send() } label: { sendGlyph("arrow.up") }
                         .buttonStyle(.plain)
-                        .keyboardShortcut(.return, modifiers: .command)
+                        // Only while typing here: elsewhere ⌘↩ belongs to the diff (ask about the selected lines).
+                        .keyboardShortcut(composerFocused ? KeyboardShortcut(.return, modifiers: .command) : nil)
                         .disabled(!canSend)
                         .accessibilityLabel("Send")
                         .help("Send (⌘↩)")

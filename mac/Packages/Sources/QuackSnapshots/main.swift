@@ -118,6 +118,86 @@ func sidebarSelfCheck(_ view: some View) {
     window.orderOut(nil)
 }
 
+/// Self-check: line selection in the diff survives label updates. Labels change while labeling runs
+/// (and used to rebuild every row), so this selects lines, opens the ask card, types, pushes new labels,
+/// and checks the selection, the card, its text and its focus are all still there.
+/// A JavaScript string literal (JSON-escaped).
+func jsString(_ s: String) -> String {
+    String(data: try! JSONSerialization.data(withJSONObject: s, options: .fragmentsAllowed), encoding: .utf8)!
+}
+
+@MainActor
+func selectionSelfCheck(_ view: some View, labels: String) {
+    let size = CGSize(width: 1200, height: 700)
+    let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
+    let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+    window.contentView = host
+    window.setFrameOrigin(CGPoint(x: -10_000, y: -10_000))
+    window.makeKeyAndOrderFront(nil)
+    RunLoop.main.run(until: Date().addingTimeInterval(3))
+    guard let web = findWebView(host) else { print("FAIL: no web view"); exit(1) }
+    func js(_ code: String) -> String {
+        var out = "?"
+        var done = false
+        web.evaluateJavaScript(code) { r, e in out = r.map { "\($0)" } ?? "error: \(e.map { "\($0)" } ?? "nil")"; done = true }
+        while !done { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        return out
+    }
+    let result = js("""
+    (() => {
+      const gutters = () => [...document.querySelectorAll('[data-g]')].filter(e => e.closest('[data-i]'));
+      const g = gutters();
+      const a = g[2].getBoundingClientRect(), b = g[6].getBoundingClientRect();
+      const opts = (r) => ({ bubbles: true, cancelable: true, button: 0, clientX: r.x + r.width/2, clientY: r.y + r.height/2 });
+      g[2].dispatchEvent(new MouseEvent('mousedown', opts(a)));
+      window.dispatchEvent(new MouseEvent('mousemove', opts(b)));
+      const midDrag = document.querySelectorAll('.pick').length;
+      const askButton = document.querySelector('.askpill button');
+      window.quack.render(JSON.parse(\(jsString(labels))));
+      const buttonKept = !!askButton && askButton.isConnected;
+      window.dispatchEvent(new MouseEvent('mouseup', opts(b)));
+      const picked = document.querySelectorAll('.pick').length;
+      askButton && askButton.click();
+      const ta = document.getElementById('ask-text');
+      if (!ta) return JSON.stringify({ midDrag, buttonKept, picked, card: false });
+      ta.value = 'why?';
+      window.quack.render(JSON.parse(\(jsString(labels.replacingOccurrences(of: "\"high\"", with: "\"low\"")))));
+      const ta2 = document.getElementById('ask-text');
+      return JSON.stringify({ midDrag, buttonKept, picked, card: !!ta2 && ta2.isConnected, text: ta2 && ta2.value, focused: document.activeElement === ta2,
+        badge: !!document.querySelector('.fh') });
+    })()
+    """)
+    print("selection across label updates:", result)
+    // The hover "+": a click on it selects that one line and opens the ask card straight away.
+    let plus = js("""
+    (() => {
+      document.querySelector('#card .x, #card [data-close]')?.click();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      const p = [...document.querySelectorAll('.plus')][9];
+      if (!p) return 'no plus';
+      const r = p.getBoundingClientRect();
+      const o = { bubbles: true, cancelable: true, button: 0, clientX: r.x + r.width/2, clientY: r.y + r.height/2 };
+      p.dispatchEvent(new MouseEvent('mousedown', o));
+      window.dispatchEvent(new MouseEvent('mouseup', o));
+      return JSON.stringify({ card: !!document.getElementById('ask-text'), count: document.getElementById('pill-count')?.textContent, focused: document.activeElement?.id });
+    })()
+    """)
+    print("plus click:", plus)
+    // A picture with the "+" forced visible on one line, for the eye.
+    _ = js("document.querySelector('#card') && document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); const s = document.createElement('style'); s.textContent = '.row:nth-child(14) .plus{opacity:1}'; document.head.append(s); 'ok'")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    var shot: NSImage?
+    web.takeSnapshot(with: nil) { image, _ in shot = image }
+    while shot == nil { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    if let dir = CommandLine.arguments.dropFirst().first, let tiff = shot?.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+        try? png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("diff-plus.png"))
+    }
+    window.orderOut(nil)
+    let ok = result.contains("\"buttonKept\":true") && result.contains("\"card\":true") && result.contains("\"text\":\"why?\"") && result.contains("\"focused\":true") && !result.contains("\"picked\":0") && plus.contains("\"card\":true") && plus.contains("1 line selected") && plus.contains("\"focused\":\"ask-text\"")
+    print(ok ? "PASS" : "FAIL")
+    exit(ok ? 0 : 1)
+}
+
 MainActor.assumeIsolated {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
@@ -184,6 +264,14 @@ MainActor.assumeIsolated {
     let deepLabels: RiskLabelsMessage = decode(#"{"requestId":"l","pr":{"owner":"acme","repo":"web","number":4127},"headSha":"\#(sha)","status":"ready","agent":"cursor","model":"auto","files":[\#(deepFiles.enumerated().map { #"{"path":"\#($1.0)","risk":"\#($1.1)","reason":"\#($1.2)","rank":\#($0),"source":"agent"}"# }.joined(separator: ","))]}"#)
     let deepStore = PRStore(preview: prKey, model: model, review: prReview, labels: deepLabels, diff: deepDiff)
     snapshot("pr-sidebar-deep", size: CGSize(width: 320, height: 640)) { NavigationStack { RankedFilesSidebar(store: deepStore, model: model) } }
+    if ProcessInfo.processInfo.environment["QUACK_SELECT_CHECK"] != nil {
+        let longPatch = "@@ -0,0 +1,60 @@\\n" + (1...60).map { "+const line\($0) = \($0);" }.joined(separator: "\\n") + "\\n"
+        let diff: PrDiffMessage = decode(#"{"requestId":"d","pr":{"owner":"acme","repo":"web","number":4127},"baseSha":"b","headSha":"\#(sha)","files":[{"path":"src/long.ts","status":"added","additions":60,"deletions":0,"binary":false,"truncated":false,"patch":"\#(longPatch)"}]}"#)
+        let store = PRStore(preview: prKey, model: model, review: prReview, labels: nil, diff: diff)
+        let filesJSON = String(data: try! JSONEncoder().encode(diff.files), encoding: .utf8)!
+        let labels = #"{"files":\#(filesJSON),"layout":"unified","headSha":"\#(sha)","labels":{"src/long.ts":{"path":"src/long.ts","risk":"high","reason":"New module","rank":0,"source":"agent"}}}"#
+        selectionSelfCheck(NavigationStack { PRTabView(model: model, workspace: ws, store: store) }, labels: labels)
+    }
     let cachedStore = PRStore(preview: prKey, model: model, review: nil, labels: prLabels, diff: prDiff)
     snapshot("pr-sidebar-cached", size: CGSize(width: 320, height: 760)) { NavigationStack { RankedFilesSidebar(store: cachedStore, model: model) } }
     snapshot("pr-sidebar", size: CGSize(width: 320, height: 640)) { NavigationStack { RankedFilesSidebar(store: prStore, model: model) } }

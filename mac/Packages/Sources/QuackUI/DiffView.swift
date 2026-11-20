@@ -151,7 +151,7 @@ private struct DiffWebView: NSViewRepresentable {
         weak var webView: WKWebView?
         private var ready = false
         private var sentDiffKey: String?
-        private var sentLabels: RiskLabelsMessage??
+        private var sentLabels: String?
         private var sentLayout: DiffLayout?
         private var sentScheme: ColorScheme?
         private var filesJSON = "[]"
@@ -260,14 +260,17 @@ private struct DiffWebView: NSViewRepresentable {
             }
             let diffKey = "\(p.diff.requestId)|\(p.diff.headSha)|\(p.diff.files.count)"
             let diffChanged = diffKey != sentDiffKey
-            if diffChanged || sentLabels == nil || sentLabels! != p.labels || sentLayout != p.layout {
+            // Only the per-file risks reach the page: label progress ticks (activity lines) must not
+            // re-render the diff while someone is selecting lines or typing in the ask card.
+            var byPath: [String: FileRisk] = [:]
+            for risk in p.labels?.files ?? [] { byPath[risk.path] = risk }
+            let labelsJSON = Self.json(byPath) ?? "{}"
+            if diffChanged || sentLabels != labelsJSON || sentLayout != p.layout {
                 if diffChanged { filesJSON = Self.json(p.diff.files) ?? "[]" }
                 sentDiffKey = diffKey
-                sentLabels = .some(p.labels)
+                sentLabels = labelsJSON
                 sentLayout = p.layout
-                var byPath: [String: FileRisk] = [:]
-                for risk in p.labels?.files ?? [] { byPath[risk.path] = risk }
-                let payload = "{\"files\":\(filesJSON),\"labels\":\(Self.json(byPath) ?? "{}"),\"layout\":\"\(p.layout.rawValue)\",\"headSha\":\(jsLiteral(p.diff.headSha))}"
+                let payload = "{\"files\":\(filesJSON),\"labels\":\(labelsJSON),\"layout\":\"\(p.layout.rawValue)\",\"headSha\":\(jsLiteral(p.diff.headSha))}"
                 // Parsed as JSON, not evaluated as an object literal: a file named "__proto__" stays a plain key.
                 web.evaluateJavaScript("window.quack.render(JSON.parse(\(jsLiteral(payload))))", completionHandler: nil)
                 // The page restores its own scroll position; a sidebar selection made before the first render still applies.
@@ -290,7 +293,10 @@ private struct DiffWebView: NSViewRepresentable {
         }
 
         private static func json<T: Encodable>(_ value: T) -> String? {
-            guard let data = try? JSONEncoder().encode(value) else { return nil }
+            // Sorted keys: the labels JSON is compared with the last one sent, so it must be stable.
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .sortedKeys
+            guard let data = try? encoder.encode(value) else { return nil }
             return String(data: data, encoding: .utf8)
         }
 

@@ -309,8 +309,19 @@ function cell(l: Line | null, i: number, side: Side): HTMLElement {
   fillText(tx, l);
   e.append(g, el("span", "mk", mark(l.t)), tx);
   if (l.t === "meta") tx.style.fontStyle = "italic";
+  else e.append(plusHandle());
   if (isPicked(i, side) && l.t !== "meta") e.classList.add("pick");
   return e;
+}
+
+/** The "+" shown on hover, as in most review tools: click asks about the line, drag asks about a range. */
+function plusHandle(): HTMLElement {
+  const p = el("span", "plus", "+");
+  p.dataset.g = "1";
+  p.dataset.plus = "1";
+  p.setAttribute("aria-hidden", "true");
+  p.title = "Ask about this line (drag for more lines)";
+  return p;
 }
 
 function buildRow(i: number): HTMLElement {
@@ -345,6 +356,7 @@ function buildRow(i: number): HTMLElement {
       const tx = el("span", "tx");
       fillText(tx, l);
       e.append(g1, g2, el("span", "mk", mark(l.t)), tx);
+      if (l.t !== "meta") e.append(plusHandle());
       if (isPicked(i, null) && l.t !== "meta") {
         e.classList.add("pick");
         if (selection && i === selection.b && !cardOpen) e.append(askAffordance());
@@ -570,7 +582,7 @@ function selectable(i: number): boolean {
   return !!r && (r.k === "line" || r.k === "pair");
 }
 
-let dragging: { f: number; side: Side | null; anchor: number } | null = null;
+let dragging: { f: number; side: Side | null; anchor: number; ask?: boolean } | null = null;
 
 function startDrag(e: MouseEvent): void {
   const g = (e.target as HTMLElement).closest("[data-g]");
@@ -593,7 +605,9 @@ function startDrag(e: MouseEvent): void {
     finishDrag();
     return;
   }
-  dragging = { f: r.f, side, anchor: i };
+  // Started on the "+": the ask card opens as soon as the mouse goes up.
+  dragging = { f: r.f, side, anchor: i, ask: !!(e.target as HTMLElement).closest("[data-plus]") };
+  scroller.classList.add("dragging");
   setSelection(r.f, side, i, i);
 }
 
@@ -617,10 +631,13 @@ function moveDrag(e: MouseEvent): void {
 
 function finishDrag(): void {
   if (!dragging) return;
+  const ask = dragging.ask;
   dragging = null;
+  scroller.classList.remove("dragging");
   const pick = currentPick();
   if (pick) post({ type: "selectLines", ...pick });
   draw(true);
+  if (ask && pick) openCard();
 }
 
 function setSelection(f: number, side: Side | null, a: number, b: number): void {
@@ -847,9 +864,16 @@ function render(p: RenderPayload): void {
   labels = p.labels ?? {};
   headSha = p.headSha ?? "";
   if (nextSig === signature && nextLayout === layout) {
-    // Only labels changed: redraw headers in place.
+    // Only labels changed: rebuild the file headers alone. Line rows stay put, so a drag in progress,
+    // the "Ask" button under the pointer and the open ask card (with its focus) all survive.
+    for (const [i, e] of live) {
+      if (rows[i].k === "file") {
+        e.remove();
+        live.delete(i);
+      }
+    }
     stickyFile = -1;
-    draw(true);
+    draw();
     return;
   }
   withAnchor(() => {

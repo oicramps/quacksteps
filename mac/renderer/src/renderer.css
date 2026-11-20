@@ -81,6 +81,12 @@ html,body{margin:0;height:100%;background:var(--win);color:var(--label);font-fam
 .askpill{position:absolute;right:12px;top:0;height:var(--lh);display:flex;align-items:center}
 .askpill .btn{height:16px;font-size:10.5px;padding:0 6px;background:var(--soft);color:var(--ink);font-weight:600;box-shadow:inset 0 0 0 .5px #d4a72c}
 .dl,.half{position:relative}
+/* hover "+": sits on the +/- marker column; click asks about the line, drag asks about a range */
+.plus{position:absolute;top:50%;left:83px;width:18px;height:18px;margin-top:-9px;border-radius:5px;background:var(--beak);color:var(--ink);font:600 14px/18px var(--font);text-align:center;opacity:0;box-shadow:0 1px 2px rgba(0,0,0,.2);z-index:1;cursor:default}
+.half .plus{left:41px}
+.dl:hover .plus,.half:hover .plus{opacity:1}
+.plus:hover{filter:brightness(1.08)}
+#scroller.dragging .plus{opacity:0}
 
 /* inline ask card */
 #card{margin:6px 16px 10px 66px;border-radius:12px;background:var(--pop);box-shadow:0 0 0 1px var(--line),0 8px 24px rgba(0,0,0,.12),0 1px 3px rgba(0,0,0,.08);padding:10px 12px;max-width:620px;height:122px;display:flex;flex-direction:column;gap:8px;font-size:13px;user-select:text;-webkit-user-select:text}
