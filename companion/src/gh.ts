@@ -37,7 +37,7 @@ export const QUERIES = {
     nodes { ... on PullRequest {
       ${PR_FIELDS}
       reviewRequests(first: 20) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { slug } } } }
-      latestReviews(first: 20) { nodes { state author { login } } }
+      latestReviews(first: 20) { nodes { state author { __typename login } } }
       timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT, READY_FOR_REVIEW_EVENT], last: 20) {
         nodes {
           __typename
@@ -56,7 +56,7 @@ export const QUERIES = {
     nodes { ... on PullRequest {
       ${PR_FIELDS}
       reviewThreads(last: 100) { totalCount nodes { isResolved } }
-      latestReviews(first: 20) { nodes { state submittedAt author { login } } }
+      latestReviews(first: 20) { nodes { state submittedAt author { __typename login } } }
     } }
   }
 }`,

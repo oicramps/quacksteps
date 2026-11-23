@@ -31,8 +31,11 @@ public struct InboxView: View {
     @State private var filterFocusRequest = 0
     /// Stacks the user opened or closed. Others follow the default: review requests open, my PRs closed.
     @State private var stackExpanded: [String: Bool] = [:]
+    /// Snapshots: every stack starts open.
+    var openStacks = false
 
-    public init(model: AppModel, workspace: Workspace? = nil, openPR: @escaping (PrKey) -> Void, openSetup: @escaping () -> Void, openAccounts: @escaping () -> Void = {}) {
+    public init(model: AppModel, workspace: Workspace? = nil, openPR: @escaping (PrKey) -> Void, openSetup: @escaping () -> Void, openAccounts: @escaping () -> Void = {}, openStacks: Bool = false) {
+        self.openStacks = openStacks
         self.model = model
         self.workspace = workspace
         self.openPR = openPR
@@ -380,11 +383,11 @@ public struct InboxView: View {
     }
 
     private func isExpanded(_ group: StackGroup) -> Bool {
-        stackExpanded[group.id] ?? (group.items.first?.role == .reviewer)
+        stackExpanded[group.id] ?? (openStacks || group.items.first?.role == .reviewer)
     }
 
     private func toggleStack(_ id: String) {
-        let current = stackExpanded[id] ?? id.hasPrefix("stack:reviewer:")
+        let current = stackExpanded[id] ?? (openStacks || id.hasPrefix("stack:reviewer:"))
         withAnimation(.easeOut(duration: 0.18)) { stackExpanded[id] = !current }
     }
 
@@ -605,6 +608,7 @@ private struct ReviewRow: View {
     @ViewBuilder private var tags: some View {
         if let stack = item.stack, treeLast == nil { BoardTag(text: "Stack \(stack.position)/\(stack.size)", kind: stack.position > 1 ? .accent : .plain) }
         if let approvers = approvedBy { BoardTag(text: approvedLabel(approvers), kind: .green) }
+        ApprovalTags(item: item, humans: false)
         switch item.review?.phase {
         case .preparing: BoardTag(text: "Preparing")
         case .ready: BoardTag(text: item.review?.labels == .running ? "Labeling" : "Reviewing")
@@ -660,6 +664,7 @@ private struct MyPRRow: View {
                 HStack(spacing: 6) {
                     Text(caption).lineLimit(1).layoutPriority(-1)
                     if let stack = item.stack, treeLast == nil { BoardTag(text: "Stack \(stack.position)/\(stack.size)", kind: stack.position > 1 ? .accent : .plain) }
+                    ApprovalTags(item: item, humans: true)
                 }
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
@@ -856,4 +861,25 @@ enum QuackPreviewData {
 #Preview("Organization scope") {
     InboxView(model: QuackPreviewData.accountsModel(scope: "polarsteps", suite: "quack.preview.accounts.org"), openPR: { _ in }, openSetup: {})
         .frame(width: 1000, height: 640)
+}
+
+
+/// "Approved by noor" (green: the approval a PR needs) and "coderabbitai approved" (violet, with a chip
+/// icon: a review bot, shown but not counted). `humans: false` leaves the human tag to the row.
+private struct ApprovalTags: View {
+    var item: InboxItem
+    var humans: Bool
+
+    var body: some View {
+        let people = item.humanApprovals
+        let bots = item.botApprovals
+        if humans, let first = people.first {
+            BoardTag(text: people.count > 1 ? "Approved by \(first) +\(people.count - 1)" : "Approved by \(first)", kind: .green)
+        }
+        if let first = bots.first {
+            BoardTag(text: bots.count > 1 ? "\(first) +\(bots.count - 1) approved" : "\(first) approved", kind: .bot)
+                .help(people.isEmpty ? "A review bot approved. It doesn't count: this PR still needs a person's approval." : "A review bot approved too.")
+                .accessibilityLabel("\(bots.joined(separator: ", ")) approved, a review bot, not counted")
+        }
+    }
 }

@@ -33,7 +33,7 @@ export interface RawPr {
   };
   // Author search only
   reviewThreads?: { totalCount: number; nodes: { isResolved: boolean }[] };
-  latestReviews?: { nodes: { state: string; submittedAt: string | null; author: { login: string } | null }[] };
+  latestReviews?: { nodes: { state: string; submittedAt?: string | null; author: { __typename?: string; login: string } | null }[] };
 }
 
 export interface RawSearch {
@@ -126,14 +126,31 @@ export function pastReviewerInfo(pr: RawPr, viewer: string): NonNullable<InboxIt
   return { requestedAt: newest(teams.map((e) => e.createdAt)) ?? pr.createdAt, via: 'team', ...(team && { team: team.slug }), requested: false };
 }
 
+/** Review bots that comment and approve, but aren't the human review a PR still needs. */
+const KNOWN_BOTS = new Set(['coderabbitai', 'copilot-pull-request-reviewer', 'copilot', 'sourcery-ai', 'greptile-apps', 'ellipsis-dev', 'codiumai-pr-agent-free', 'qodo-merge-pro']);
+
+/** A GitHub App (Bot account) or a known review bot. */
+export function isBot(author: { __typename?: string; login: string } | null | undefined): boolean {
+  if (!author) return false;
+  return author.__typename === 'Bot' || /\[bot\]$/i.test(author.login) || KNOWN_BOTS.has(author.login.toLowerCase());
+}
+
+/** Everyone whose latest review approves the PR, humans and bots told apart (bots' logins without "[bot]"). */
+export function approvalsOf(pr: RawPr): { login: string; bot: boolean }[] {
+  return (pr.latestReviews?.nodes ?? [])
+    .filter((r) => r.state === 'APPROVED' && r.author?.login)
+    .map((r) => ({ login: r.author!.login.replace(/\[bot\]$/i, ''), bot: isBot(r.author) }));
+}
+
 /**
- * Other reviewers whose latest review approves the PR. A review request someone else already approved
+ * Other people whose latest review approves the PR. A review request someone else already approved
  * isn't waiting on me: the app shows it below the ones that are, and leaves it out of the menu bar count.
+ * Bots don't count: a PR approved only by a review bot still needs a human.
  */
 export function approvedByOthers(pr: RawPr, viewer: string): string[] {
-  return (pr.latestReviews?.nodes ?? [])
-    .filter((r) => r.state === 'APPROVED' && r.author?.login && !sameLogin(r.author.login, viewer))
-    .map((r) => r.author!.login);
+  return approvalsOf(pr)
+    .filter((a) => !a.bot && !sameLogin(a.login, viewer))
+    .map((a) => a.login);
 }
 
 export interface AuthorDerivation {
@@ -153,10 +170,12 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 export function authorState(pr: RawPr, merge: MergeInfo | null): AuthorDerivation {
   if (pr.isDraft) return { state: null, reasons: [], estimatedSince: pr.updatedAt };
 
-  const changesBy = (pr.latestReviews?.nodes ?? []).filter((r) => r.state === 'CHANGES_REQUESTED');
+  // Bots' reviews are advice: their change requests don't make it my turn (their unresolved threads still do).
+  const changesBy = (pr.latestReviews?.nodes ?? []).filter((r) => r.state === 'CHANGES_REQUESTED' && !isBot(r.author));
+  const botOnlyDecision = pr.reviewDecision === 'CHANGES_REQUESTED' && !changesBy.length && (pr.latestReviews?.nodes ?? []).some((r) => r.state === 'CHANGES_REQUESTED');
   const unresolved = (pr.reviewThreads?.nodes ?? []).filter((t) => !t.isResolved).length;
   const reasons: string[] = [];
-  if (pr.reviewDecision === 'CHANGES_REQUESTED' || changesBy.length) {
+  if ((pr.reviewDecision === 'CHANGES_REQUESTED' && !botOnlyDecision) || changesBy.length) {
     const names = [...new Set(changesBy.map((r) => r.author?.login).filter(Boolean))];
     reasons.push(names.length ? `Changes requested by ${names.join(', ')}` : 'Changes requested');
   }
@@ -164,14 +183,15 @@ export function authorState(pr: RawPr, merge: MergeInfo | null): AuthorDerivatio
   if (merge?.mergeable === 'CONFLICTING') reasons.push('Merge conflicts');
 
   if (reasons.length) {
-    const lastChangeRequest = newest(changesBy.map((r) => r.submittedAt).filter((d): d is string => !!d));
+    const lastChangeRequest = newest(changesBy.map((r) => r.submittedAt ?? null).filter((d): d is string => !!d));
     return { state: 'waiting_on_me', reasons, estimatedSince: lastChangeRequest ?? pr.updatedAt };
   }
   if (ciOf(pr) === 'failing') {
     return { state: 'blocked_by_ci', reasons: ['Checks failing'], estimatedSince: pr.commits.nodes[0]?.commit.committedDate ?? pr.updatedAt };
   }
   const mergeReady = merge?.mergeStateStatus === 'CLEAN' || merge?.mergeStateStatus === 'HAS_HOOKS';
-  const approvalOk = pr.reviewDecision === 'APPROVED' || pr.reviewDecision === null;
+  // Ready needs a human approval, whatever GitHub's rules say: a review bot's approval isn't enough.
+  const approvalOk = (pr.reviewDecision === 'APPROVED' || pr.reviewDecision === null) && approvalsOf(pr).some((a) => !a.bot);
   if (mergeReady && approvalOk) return { state: 'ready_to_merge', reasons: [], estimatedSince: pr.updatedAt };
   return { state: 'waiting_on_reviewers', reasons: [], estimatedSince: pr.updatedAt };
 }
@@ -760,6 +780,7 @@ function baseItem(pr: RawPr): Omit<InboxItem, 'role'> {
     additions: pr.additions,
     deletions: pr.deletions,
     ci: ciOf(pr),
+    ...(approvalsOf(pr).length && { approvals: approvalsOf(pr) }),
     ...(pr.repository.owner && { ownerType: pr.repository.owner.__typename === 'Organization' ? 'org' : 'user' }),
   };
 }

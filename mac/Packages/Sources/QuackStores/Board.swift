@@ -87,6 +87,11 @@ public struct BoardStatus: Equatable, Sendable {
 }
 
 extension InboxItem {
+    /// People who approved: the approval a PR needs.
+    public var humanApprovals: [String] { (approvals ?? []).filter { !$0.bot }.map(\.login) }
+    /// Review bots that approved: shown, never counted.
+    public var botApprovals: [String] { (approvals ?? []).filter(\.bot).map(\.login) }
+
     /// Changed lines: what the Size column counts.
     public var changedLines: Int { additions + deletions }
 

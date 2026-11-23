@@ -150,6 +150,11 @@ public struct ClosedInfo: Codable, Hashable, Sendable {
 public enum CIState: String, Codable, Sendable { case passing, failing, pending, none }
 
 public struct InboxItem: Codable, Hashable, Sendable, Identifiable {
+    public struct Approval: Codable, Hashable, Sendable {
+        public var login: String
+        public var bot: Bool
+    }
+
     public enum Role: String, Codable, Sendable { case reviewer, author }
 
     public struct Reviewer: Codable, Hashable, Sendable {
@@ -186,6 +191,8 @@ public struct InboxItem: Codable, Hashable, Sendable, Identifiable {
     public var reviewer: Reviewer?
     public var author: Author?
     public var ci: CIState
+    /// Whose latest review approves the PR. Bots (review apps) never count as the approval a PR needs.
+    public var approvals: [Approval]?
     public var review: ReviewState?
     /// Set when the PR is part of a stack of PRs.
     public var stack: StackInfo?

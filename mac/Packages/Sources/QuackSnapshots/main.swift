@@ -499,6 +499,7 @@ MainActor.assumeIsolated {
     }
     writeBoards(inbox: inbox, prKey: prKey, prReview: prReview, prLabels: prLabels, prDiff: prDiff, ws: ws)
     assignBoards()
+    approvalBoards()
     let cachedStore = PRStore(preview: prKey, model: model, review: nil, labels: prLabels, diff: prDiff)
     snapshot("pr-sidebar-cached", size: CGSize(width: 320, height: 760)) { NavigationStack { RankedFilesSidebar(store: cachedStore, model: model) } }
     snapshot("pr-sidebar", size: CGSize(width: 320, height: 640)) { NavigationStack { RankedFilesSidebar(store: prStore, model: model) } }

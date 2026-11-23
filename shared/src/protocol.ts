@@ -732,6 +732,8 @@ export interface InboxItem {
   /** `state` is null for drafts. */
   author?: { state: AuthorState | null; since: string; reasons: string[] };
   ci: 'passing' | 'failing' | 'pending' | 'none';
+  /** Whose latest review approves the PR. `bot`: a review bot (GitHub App), which never counts as the approval a PR needs. */
+  approvals?: { login: string; bot: boolean }[];
   /** Set while I'm reviewing this PR (the inbox's "Reviewing" filter). */
   review?: ReviewState;
   /** Set when the PR is part of a stack: its base branch is another open PR's head, or another PR sits on top of it. */
