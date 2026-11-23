@@ -145,7 +145,11 @@ public final class ServerConnection: Sendable {
             }
             // One-shot subscriptions (keepAlive: false) are unsubscribed too, so the server stops pushing.
             if wasSubscribed || isSubscription { self.send(.unsubscribe, id: id) }
-            if case .ask = request { self.send(.cancel, id: id) }
+            // Agent work the server would otherwise finish for nobody.
+            switch request {
+            case .ask, .gapCheck, .draftComment: self.send(.cancel, id: id)
+            default: break
+            }
         }
         if connected {
             send(request, id: id)

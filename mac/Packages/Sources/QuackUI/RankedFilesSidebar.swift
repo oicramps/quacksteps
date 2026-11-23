@@ -124,7 +124,10 @@ public struct RankedFilesSidebar: View {
 
     private func rows(_ group: Group) -> some View {
         ForEach(group.rows) { row in
-            FileRow(row: row, loading: labelsRunning && mode == .flat, labeller: labellerText)
+            FileRow(row: row, loading: labelsRunning && mode == .flat, labeller: labellerText,
+                    viewed: store.canWrite ? (store.viewed[row.id] ?? .unviewed) : nil) { on in
+                Task { await store.setViewed(row.id, on) }
+            }
                 .opacity(dimmed ? 0.55 : 1)
                 .tag(row.id)
         }
@@ -178,10 +181,25 @@ public struct RankedFilesSidebar: View {
                 HStack(spacing: 5) {
                     Text("Files").font(.headline)
                     Text("\(totals.files)").font(.headline).monospacedDigit().foregroundStyle(.secondary)
+                    if store.canWrite, store.diff?.since != nil {
+                        Text("· changed since your review").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 8)
-                LineCounts(totals.additions, totals.deletions)
-                    .font(.system(size: 11, design: .monospaced))
+                if store.canWrite {
+                    let progress = store.viewedProgress
+                    Text("Viewed \(progress.viewed) of \(progress.total)")
+                        .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                } else {
+                    LineCounts(totals.additions, totals.deletions)
+                        .font(.system(size: 11, design: .monospaced))
+                }
+            }
+            if store.canWrite {
+                let progress = store.viewedProgress
+                ViewedProgressBar(fraction: progress.total == 0 ? 0 : Double(progress.viewed) / Double(progress.total))
+                    .padding(.top, 2)
+                    .accessibilityHidden(true)
             }
             if let line = rankedByLine {
                 Text(line)
@@ -394,6 +412,11 @@ private struct FileRow: View {
     var loading: Bool
     /// "Cursor · auto": who ranked the list, for the tooltip.
     var labeller: String = "the agent"
+    /// nil when the server can't write: no tick at all.
+    var viewed: ViewedState? = nil
+    var setViewed: (Bool) -> Void = { _ in }
+
+    private var isViewed: Bool { viewed == .viewed }
 
     private var displayName: String {
         if let old = row.file.oldPath, old != row.file.path {
@@ -429,6 +452,7 @@ private struct FileRow: View {
                             folderText(form)
                             Spacer(minLength: 4)
                             counts
+                            tickSpace
                         }
                     }
                     VStack(alignment: .leading, spacing: 1) {
@@ -436,6 +460,7 @@ private struct FileRow: View {
                             nameText
                             Spacer(minLength: 4)
                             counts
+                            tickSpace
                         }
                         if let full = folderForms.first {
                             folderText(full).truncationMode(.head)
@@ -461,11 +486,27 @@ private struct FileRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.name), \(riskWord)")
         .accessibilityValue(spokenValue)
+        .overlay(alignment: .topTrailing) {
+            if viewed != nil {
+                Toggle(isOn: Binding(get: { isViewed }, set: { setViewed($0) })) { Text("Viewed \(row.name)") }
+                    .toggleStyle(ViewedTickStyle())
+                    .labelsHidden()
+                    .accessibilityLabel("Viewed \(row.name)")
+                    .help(viewed == .dismissed ? "Changed since you viewed it. Mark as viewed" : (isViewed ? "Viewed. Click to unmark" : "Mark as viewed"))
+                    .padding(.top, 6)
+            }
+        }
+    }
+
+    /// Room at the end of the name line for the tick, which is overlaid outside the row's spoken summary.
+    @ViewBuilder private var tickSpace: some View {
+        if viewed != nil { Color.clear.frame(width: 14, height: 1) }
     }
 
     private var nameText: some View {
         Text(displayName)
             .fontWeight(.medium)
+            .foregroundStyle(isViewed ? .secondary : .primary)
             .lineLimit(1)
             .truncationMode(.middle)
     }
@@ -497,6 +538,7 @@ private struct FileRow: View {
     private var tooltip: String {
         var lines = [row.file.oldPath.map { "\($0) → \(row.file.path)" } ?? row.file.path]
         if let reason = row.risk?.reason, !reason.isEmpty { lines.append(reason) }
+        if viewed == .dismissed { lines.append("Changed since you viewed it") }
         if row.risk != nil { lines.append(isRule ? "Labelled by a rule" : "Labelled by \(labeller)") }
         return lines.joined(separator: "\n")
     }

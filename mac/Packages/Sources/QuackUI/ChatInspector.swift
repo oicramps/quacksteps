@@ -503,11 +503,34 @@ private struct TurnView: View {
         case .done:
             if !turn.answer.isEmpty { ProseView(markdown: turn.answer, paths: paths) }
             HStack(spacing: 8) {
-                Button("Copy as comment") { copyToPasteboard(turn.answer) }
+                // With review writing: the agent rewrites the answer as my comment, placed on the lines asked about.
+                if store.canTurnIntoComment(turn) {
+                    Button {
+                        Task { await store.turnIntoComment(turn) }
+                    } label: {
+                        if store.draftingTurn == turn.id {
+                            HStack(spacing: 5) {
+                                ProgressView().controlSize(.mini)
+                                Text("Drafting…")
+                            }
+                        } else {
+                            Label("Turn into comment", systemImage: "text.bubble")
+                        }
+                    }
+                    .disabled(store.draftingTurn != nil)
+                    .help("Rewrite this answer as your review comment on the lines you asked about, to edit before adding")
+                } else {
+                    Button("Copy as comment") { copyToPasteboard(turn.answer) }
+                }
                 Button("Ask a follow-up", action: focusComposer)
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            if let placed = store.placedDrafts[turn.id] {
+                Label("Draft placed on \(placed)", systemImage: "checkmark")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
         case let .failed(code, message, fixSteps):
             if !turn.answer.isEmpty { ProseView(markdown: turn.answer, paths: paths) }
             failure(code: code, message: message, fixSteps: fixSteps)

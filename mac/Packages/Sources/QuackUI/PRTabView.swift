@@ -8,7 +8,7 @@ import SwiftUI
 public struct PRTabView: View {
     let model: AppModel
     let workspace: Workspace
-    let store: PRStore
+    @Bindable var store: PRStore
     /// Show or hide the window's sidebar (ranked files). Owned by the window.
     var toggleSidebar: () -> Void
     /// Focus the ranked-files filter field. Owned by the window.
@@ -35,6 +35,8 @@ public struct PRTabView: View {
     public var body: some View {
         VStack(spacing: 0) {
             PRBanner(store: store, model: model)
+            SinceReviewBanner(store: store)
+            WriteErrorBanner(store: store)
             DiffView(store: store, layout: layout, controller: controller) { showChat = true }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { PRStatusBar(store: store, model: model) }
@@ -53,6 +55,9 @@ public struct PRTabView: View {
                 }
             }
         }
+        .overlay(alignment: .top) { SubmitResultOverlay(store: store) }
+        .animation(.default, value: store.submitState)
+        .sheet(isPresented: $store.showSubmitSheet) { SubmitReviewSheet(store: store) }
         .background(shortcuts)
         .task { store.start() }
     }
@@ -70,6 +75,20 @@ public struct PRTabView: View {
             }
             .pickerStyle(.segmented)
             .help("Unified or split diff (⌘⇧D)")
+        }
+        if store.canWrite, store.canShowSinceLastReview || store.sinceLastReview {
+            ToolbarItem(placement: .primaryAction) {
+                Toggle("Since my last review", isOn: Binding(
+                    get: { store.sinceLastReview },
+                    set: { on in Task { await store.setSinceLastReview(on) } }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help("Show only what changed since your last review")
+            }
+        }
+        if store.canWrite, store.review != nil {
+            ToolbarItem(placement: .primaryAction) { SubmitReviewButton(store: store) }
         }
         ToolbarItem(placement: .primaryAction) { ReviewControl(store: store) }
         ToolbarItem(placement: .primaryAction) { OpenInControl(store: store, opener: opener) }

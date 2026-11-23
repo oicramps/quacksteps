@@ -68,6 +68,7 @@ public struct InboxView: View {
             }
         }
         .background(windowShortcuts)
+        .assignPromptSheet(model: model)
         // Picking a filter or repo always shows the Inbox tab.
         .onChange(of: filter) { workspace?.selected = .inbox }
         .task {

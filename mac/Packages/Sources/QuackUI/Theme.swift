@@ -1,3 +1,4 @@
+import QuackStores
 import AppKit
 import CoreText
 import SwiftUI
@@ -61,7 +62,13 @@ public enum Tokens {
     public static let fill2 = Color.primary.opacity(0.085)
 
     /// Avatar colours from the canvas.
-    public static let avatars: [Color] = [0x2563eb, 0x7a5af8, 0x0e8a7e, 0xbe185d, 0xc2410c, 0x0369a1, 0x4d7c0f, 0x9333ea].map { Color(hex: $0) }
+    public static let avatarHex: [UInt32] = [0x2563eb, 0x7a5af8, 0x0e8a7e, 0xbe185d, 0xc2410c, 0x0369a1, 0x4d7c0f, 0x9333ea]
+    public static let avatars: [Color] = avatarHex.map { Color(hex: $0) }
+
+    /// "#2563eb": a login's avatar colour for the diff web view.
+    public static func avatarCSS(_ login: String) -> String {
+        String(format: "#%06x", avatarHex[avatarColorIndex(login, count: avatarHex.count)])
+    }
 }
 
 // MARK: - Type

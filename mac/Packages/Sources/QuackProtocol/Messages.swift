@@ -3,7 +3,7 @@ import Foundation
 // Swift mirror of shared/src/protocol.ts (socket protocol v2). Hand-written, and kept honest by
 // decoding shared/fixtures/messages.json in QuackProtocolTests: change both sides together.
 
-public let socketProtocolVersion = 2
+public let socketProtocolVersion = 3
 
 // MARK: - Basics
 
@@ -323,6 +323,13 @@ public struct PrDiffMessage: Codable, Hashable, Sendable {
     public var baseSha: String
     public var headSha: String
     public var files: [PrDiffFile]
+    /// "Since my last review": the commit compared from, and how many commits came after it.
+    public var since: Since?
+
+    public struct Since: Codable, Hashable, Sendable {
+        public var sha: String
+        public var commits: Int
+    }
 }
 
 public struct StoredTurn: Codable, Hashable, Sendable {
@@ -351,6 +358,8 @@ public struct HelloResponse: Codable, Hashable, Sendable {
         public var labels: Bool
         public var review: Bool
         public var agents: [AgentId]
+        /// v3: reviews can be written to GitHub.
+        public var write: Bool?
     }
     public var requestId: String
     public var version: String
@@ -443,6 +452,11 @@ public enum ServerMessage: Decodable, Sendable {
     case settings(SettingsMessage)
     case diagnostics(DiagnosticsMessage)
     case workspace(WorkspaceMessage)
+    case reviewDrafts(ReviewDraftsMessage)
+    case reviewThreads(ReviewThreadsMessage)
+    case reviewSubmitted(ReviewSubmittedMessage)
+    case draftComment(DraftCommentMessage)
+    case gapCheck(GapCheckMessage)
     case unknown(type: String, requestId: String?)
 
     private enum CodingKeys: String, CodingKey { case type, requestId }
@@ -465,6 +479,11 @@ public enum ServerMessage: Decodable, Sendable {
         case "settings": self = .settings(try SettingsMessage(from: decoder))
         case "diagnostics": self = .diagnostics(try DiagnosticsMessage(from: decoder))
         case "workspace": self = .workspace(try WorkspaceMessage(from: decoder))
+        case "review_drafts": self = .reviewDrafts(try ReviewDraftsMessage(from: decoder))
+        case "review_threads": self = .reviewThreads(try ReviewThreadsMessage(from: decoder))
+        case "review_submitted": self = .reviewSubmitted(try ReviewSubmittedMessage(from: decoder))
+        case "draft_comment": self = .draftComment(try DraftCommentMessage(from: decoder))
+        case "gap_check": self = .gapCheck(try GapCheckMessage(from: decoder))
         default: self = .unknown(type: type, requestId: try c.decodeIfPresent(String.self, forKey: .requestId))
         }
     }
@@ -485,6 +504,11 @@ public enum ServerMessage: Decodable, Sendable {
         case let .settings(m): m.requestId
         case let .diagnostics(m): m.requestId
         case let .workspace(m): m.requestId
+        case let .reviewDrafts(m): m.requestId
+        case let .reviewThreads(m): m.requestId
+        case let .reviewSubmitted(m): m.requestId
+        case let .draftComment(m): m.requestId
+        case let .gapCheck(m): m.requestId
         case let .unknown(_, id): id
         }
     }
@@ -558,7 +582,8 @@ public enum AppRequest: Sendable, Hashable {
     case stopReview(PrKey, removeWorktree: Bool)
     case updateReview(PrKey)
     case riskLabels(PrKey, headSha: String?, rerun: Bool)
-    case prDiff(PrKey, headSha: String?)
+    /// `since`: only what changed from that commit (my last review) to the head.
+    case prDiff(PrKey, headSha: String?, since: String? = nil)
     case threads(PrKey)
     /// `history`: earlier turns, sent when a thread continues on a new agent session (e.g. after switching agents).
     case ask(agent: AgentId, model: String, pr: PrRef, selections: [CodeSelection], question: String, sessionId: String?, history: [HistoryTurn] = [])
@@ -577,6 +602,20 @@ public enum AppRequest: Sendable, Hashable {
     case setScanFolders([String])
     /// Links (or with nil, unlinks) a clone for "owner/repo".
     case linkClone(repo: String, path: String?)
+    // Writing reviews (v3)
+    case reviewDrafts(PrKey)
+    case saveDraft(PrKey, DraftInput)
+    case deleteDraft(PrKey, id: String)
+    case saveReviewSummary(PrKey, summary: String, event: ReviewEvent?)
+    case reviewThreads(PrKey)
+    case resolveThread(PrKey, threadId: String, resolved: Bool)
+    case markViewed(PrKey, path: String, viewed: Bool)
+    case assignMe(PrKey)
+    case submitReview(PrKey, headSha: String, event: ReviewEvent, summary: String)
+    /// "Turn into comment": the answer about `anchor`, rewritten as a review comment.
+    case draftComment(PrKey, agent: AgentId, model: String, headSha: String, anchor: CommentAnchor, lines: String?, question: String, answer: String)
+    /// Streams `tool` events, then `gapCheck`.
+    case gapCheck(PrKey, agent: AgentId, model: String, headSha: String)
 
     /// The JSON object sent on the wire, with `requestId` filled in.
     public func json(requestId: String) -> [String: Any] {
@@ -616,10 +655,11 @@ public enum AppRequest: Sendable, Hashable {
             m["pr"] = key(pr)
             if let headSha { m["headSha"] = headSha }
             if rerun { m["rerun"] = true }
-        case let .prDiff(pr, headSha):
+        case let .prDiff(pr, headSha, since):
             m["type"] = "pr_diff"
             m["pr"] = key(pr)
             if let headSha { m["headSha"] = headSha }
+            if let since { m["since"] = since }
         case let .threads(pr):
             m["type"] = "threads"
             m["pr"] = key(pr)
@@ -665,6 +705,62 @@ public enum AppRequest: Sendable, Hashable {
         case let .linkClone(repo, path):
             m["type"] = "workspace_save"
             m["repoPaths"] = [repo: path.map { $0 as Any } ?? NSNull()]
+        case let .reviewDrafts(pr):
+            m["type"] = "review_drafts"
+            m["pr"] = key(pr)
+        case let .saveDraft(pr, draft):
+            m["type"] = "save_draft"
+            m["pr"] = key(pr)
+            m["draft"] = draft.json
+        case let .deleteDraft(pr, id):
+            m["type"] = "delete_draft"
+            m["pr"] = key(pr)
+            m["id"] = id
+        case let .saveReviewSummary(pr, summary, event):
+            m["type"] = "save_review_summary"
+            m["pr"] = key(pr)
+            m["summary"] = summary
+            m["event"] = event?.rawValue ?? NSNull()
+        case let .reviewThreads(pr):
+            m["type"] = "review_threads"
+            m["pr"] = key(pr)
+        case let .resolveThread(pr, threadId, resolved):
+            m["type"] = "resolve_thread"
+            m["pr"] = key(pr)
+            m["threadId"] = threadId
+            m["resolved"] = resolved
+        case let .markViewed(pr, path, viewed):
+            m["type"] = "mark_viewed"
+            m["pr"] = key(pr)
+            m["path"] = path
+            m["viewed"] = viewed
+        case let .assignMe(pr):
+            m["type"] = "assign_me"
+            m["pr"] = key(pr)
+        case let .submitReview(pr, headSha, event, summary):
+            m["type"] = "submit_review"
+            m["pr"] = key(pr)
+            m["headSha"] = headSha
+            m["event"] = event.rawValue
+            m["summary"] = summary
+        case let .draftComment(pr, agent, model, headSha, anchor, lines, question, answer):
+            m["type"] = "draft_comment"
+            m["pr"] = key(pr)
+            m["agent"] = agent.rawValue
+            m["model"] = model
+            m["headSha"] = headSha
+            var a: [String: Any] = ["path": anchor.path, "side": anchor.side.rawValue, "line": anchor.line]
+            if let s = anchor.startLine, s < anchor.line { a["startLine"] = s }
+            m["anchor"] = a
+            if let lines { m["lines"] = lines }
+            m["question"] = question
+            m["answer"] = answer
+        case let .gapCheck(pr, agent, model, headSha):
+            m["type"] = "gap_check"
+            m["pr"] = key(pr)
+            m["agent"] = agent.rawValue
+            m["model"] = model
+            m["headSha"] = headSha
         }
         return m
     }
