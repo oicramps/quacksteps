@@ -87,6 +87,11 @@ public struct BoardStatus: Equatable, Sendable {
 }
 
 extension InboxItem {
+    /// People who approved: the approval a PR needs.
+    public var humanApprovals: [String] { (approvals ?? []).filter { !$0.bot }.map(\.login) }
+    /// Review bots that approved: shown, never counted.
+    public var botApprovals: [String] { (approvals ?? []).filter(\.bot).map(\.login) }
+
     /// Changed lines: what the Size column counts.
     public var changedLines: Int { additions + deletions }
 
@@ -129,14 +134,34 @@ public struct StackGroup: Identifiable, Hashable, Sendable {
         self.items = items
     }
 
-    /// The bottom PR's title prefix ("Trip map: cluster pins" → "Trip map"), else its whole title.
+    /// What the stack is about, from its members' titles:
+    /// - the prefix before a colon, when every title shares it ("Trip map: …" → "Trip map");
+    /// - else a tag every title starts with, brackets dropped ("[REL-1447] Show …" → "REL-1447");
+    /// - else the bottom PR's colon prefix, else its whole title.
     public var name: String {
-        let title = items.first?.title ?? ""
-        if let colon = title.firstIndex(of: ":") {
-            let prefix = title[..<colon].trimmingCharacters(in: .whitespaces)
-            if !prefix.isEmpty { return prefix }
+        let titles = items.map(\.title)
+        let first = titles.first ?? ""
+        func colonPrefix(_ t: String) -> String? {
+            guard let colon = t.firstIndex(of: ":") else { return nil }
+            let prefix = t[..<colon].trimmingCharacters(in: .whitespaces)
+            return prefix.isEmpty ? nil : prefix
         }
-        return title
+        if titles.count > 1, let p = colonPrefix(first), titles.allSatisfy({ colonPrefix($0) == p }) { return p }
+        if titles.count > 1 {
+            let words = titles.map { $0.split(separator: " ", omittingEmptySubsequences: true) }
+            var shared: [Substring] = []
+            for (i, w) in words[0].enumerated() {
+                guard words.allSatisfy({ i < $0.count - 1 && $0[i] == w }) else { break }
+                shared.append(w)
+            }
+            let trimmed = shared.joined(separator: " ")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "[]()·-–—:|/ "))
+            // Only a tag reads as a name ("[Search]", "REL-1447"); shared plain words ("Add") don't.
+            let tagged = shared.first.map { $0.hasPrefix("[") || $0.hasPrefix("(") } == true
+                || trimmed.contains(where: \.isNumber)
+            if tagged, trimmed.count >= 3 { return trimmed }
+        }
+        return colonPrefix(first) ?? first
     }
 
     public var totalLines: Int { items.reduce(0) { $0 + $1.changedLines } }

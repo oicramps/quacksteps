@@ -21,6 +21,10 @@ public final class AppModel {
     public private(set) var refreshing = false
     /// The last action that failed, shown in a banner until the next success.
     public var actionError: String?
+    /// The PR "Assign this PR to you?" is asking about, after Start reviewing.
+    public var assignPrompt: PrKey?
+    @ObservationIgnored var askToAssignStored = true
+    @ObservationIgnored var assignAsked: Set<String> = []
 
     /// Called with each poll's events (notifications).
     @ObservationIgnored public var onEvents: (([InboxEvent], [InboxItem]) -> Void)?
@@ -107,6 +111,8 @@ public final class AppModel {
         visibilityDefaults = defaults
         hiddenRepos = Set((defaults.stringArray(forKey: "inbox.hiddenRepos") ?? []).map { $0.lowercased() })
         accountScope = defaults.string(forKey: "inbox.accountScope")
+        askToAssignStored = !defaults.bool(forKey: "reviews.dontAskToAssign")
+        assignAsked = Set(defaults.stringArray(forKey: "reviews.assignAsked") ?? [])
     }
 
     // MARK: Account scope ("Show PRs from")
@@ -239,7 +245,42 @@ public final class AppModel {
         }
     }
 
-    public func startReview(_ pr: PrKey) async { await reviewAction(.startReview(pr, agent: nil, model: nil)) }
+    public func startReview(_ pr: PrKey) async {
+        await reviewAction(.startReview(pr, agent: nil, model: nil))
+        // "Assign this PR to you?" once per PR (canvas "Start reviewing → assign"). Not now still reviews.
+        guard actionError == nil, hello?.capabilities.write == true, askToAssign, !assignAsked.contains(pr.id) else { return }
+        if prStores[pr.id]?.assignedToMe == true { return }
+        assignAsked.insert(pr.id)
+        visibilityDefaults.set(Array(assignAsked.suffix(500)), forKey: "reviews.assignAsked")
+        assignPrompt = pr
+    }
+
+    /// Start reviewing asks to assign me (Settings › Reviews).
+    public var askToAssign: Bool {
+        get { access(keyPath: \.askToAssignStored); return askToAssignStored }
+        set {
+            withMutation(keyPath: \.askToAssignStored) { askToAssignStored = newValue }
+            visibilityDefaults.set(!newValue, forKey: "reviews.dontAskToAssign")
+        }
+    }
+
+    /// Answers the assign prompt. Returns the error if GitHub refused.
+    @discardableResult
+    public func answerAssignPrompt(assign: Bool, dontAskAgain: Bool) async -> String? {
+        let pr = assignPrompt
+        assignPrompt = nil
+        if dontAskAgain { askToAssign = false }
+        guard assign, let pr else { return nil }
+        do {
+            _ = try await server.request(.assignMe(pr), timeout: .seconds(60))
+            prStores[pr.id]?.markAssigned()
+            actionError = nil
+            return nil
+        } catch {
+            actionError = "Couldn't assign you: \(error)"
+            return actionError
+        }
+    }
     public func stopReview(_ pr: PrKey, removeWorktree: Bool = false) async { await reviewAction(.stopReview(pr, removeWorktree: removeWorktree)) }
     public func updateReview(_ pr: PrKey) async { await reviewAction(.updateReview(pr)) }
 

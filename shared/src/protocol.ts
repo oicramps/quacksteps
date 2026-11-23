@@ -33,7 +33,12 @@ export type ErrorCode =
   | 'gh_sso_required'
   | 'rate_limited'
   | 'server_busy'
-  | 'not_implemented';
+  | 'not_implemented'
+  // Socket protocol (v3): writing reviews.
+  /** The gh login can read the repo but not write to it (needs the `repo` scope or push access). */
+  | 'gh_write_denied'
+  /** The viewer already has a pending review on GitHub for this PR, started outside Quacksteps. */
+  | 'review_pending_on_github';
 
 export interface FixStep {
   text: string;
@@ -340,6 +345,8 @@ export interface PrDiffRequest {
   requestId: string;
   pr: PrKey;
   headSha?: string;
+  /** v3, "Since my last review": only what changed from this commit (full SHA) to the head. */
+  since?: string;
 }
 
 /** Stored chat turns for this PR. */
@@ -394,6 +401,232 @@ export interface DiagnosticsRequest {
   requestId: string;
 }
 
+// Writing reviews (v3). Comments, replies and the summary stay on this Mac (state.db) until
+// `submit_review` posts them together; resolving a thread, viewed ticks and assigning are immediate.
+// Every write is a request the app sends for an explicit user action; agents never reach these.
+
+/** Where a review comment sits in the diff: GitHub's `line` (and `startLine` for a range) on one side. */
+export interface CommentAnchor {
+  path: string;
+  /** RIGHT: the new file (added and context lines). LEFT: the old file (removed lines). */
+  side: 'LEFT' | 'RIGHT';
+  line: number;
+  /** First line of a multi-line comment, on the same side; absent for one line. */
+  startLine?: number;
+}
+
+/** Who wrote a draft first. Shown in the app only; nothing on GitHub says an agent was involved. */
+export type DraftOrigin = 'me' | 'agent' | 'gap_check';
+
+export interface DraftComment {
+  id: string;
+  /** The commit the anchor's lines refer to. */
+  headSha: string;
+  /** A new comment on lines. Exactly one of `anchor` and `replyTo` is set. */
+  anchor?: CommentAnchor;
+  /** A reply to an existing review thread (its GitHub node id). */
+  replyTo?: string;
+  body: string;
+  origin: DraftOrigin;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ReviewEvent = 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES';
+
+/** Everything pending for one PR. */
+export interface ReviewDraftsMessage {
+  type: 'review_drafts';
+  requestId: string;
+  pr: PrKey;
+  comments: DraftComment[];
+  summary: string;
+  event: ReviewEvent | null;
+}
+
+/** The PR's drafts. */
+export interface ReviewDraftsRequest {
+  type: 'review_drafts';
+  requestId: string;
+  pr: PrKey;
+}
+
+/** Adds a draft (no `id`) or replaces one. Replies with `review_drafts`. */
+export interface SaveDraftRequest {
+  type: 'save_draft';
+  requestId: string;
+  pr: PrKey;
+  draft: { id?: string; headSha: string; anchor?: CommentAnchor; replyTo?: string; body: string; origin: DraftOrigin };
+}
+
+/** Replies with `review_drafts`. */
+export interface DeleteDraftRequest {
+  type: 'delete_draft';
+  requestId: string;
+  pr: PrKey;
+  id: string;
+}
+
+/** The submit sheet's summary and outcome, kept while it's being written. Replies with `review_drafts`. */
+export interface SaveReviewSummaryRequest {
+  type: 'save_review_summary';
+  requestId: string;
+  pr: PrKey;
+  summary: string;
+  event: ReviewEvent | null;
+}
+
+/** GitHub's side of a review: threads, viewed files and my last review. Replies with `review_threads`. */
+export interface ReviewThreadsRequest {
+  type: 'review_threads';
+  requestId: string;
+  pr: PrKey;
+}
+
+export interface ReviewThreadComment {
+  id: string;
+  author: string;
+  body: string;
+  createdAt: string;
+  url: string;
+}
+
+export interface ReviewThread {
+  id: string;
+  path: string;
+  side: 'LEFT' | 'RIGHT';
+  /** null when the thread's lines are no longer in the diff (outdated). */
+  line: number | null;
+  startLine: number | null;
+  /** The line when the thread was started, for outdated threads. */
+  originalLine: number | null;
+  isResolved: boolean;
+  isOutdated: boolean;
+  canResolve: boolean;
+  canReply: boolean;
+  comments: ReviewThreadComment[];
+}
+
+export type ViewedState = 'VIEWED' | 'UNVIEWED' | 'DISMISSED';
+
+export interface ReviewThreadsMessage {
+  type: 'review_threads';
+  requestId: string;
+  pr: PrKey;
+  viewer: string;
+  headSha: string;
+  threads: ReviewThread[];
+  /** GitHub's viewed state per path. DISMISSED: viewed, then the file changed. */
+  viewed: Record<string, ViewedState>;
+  /** My last submitted review: what "Since my last review" compares against. */
+  lastReview: { commit: string; submittedAt: string; state: 'COMMENTED' | 'APPROVED' | 'CHANGES_REQUESTED' } | null;
+  /** I'm an assignee: "Start reviewing" doesn't ask to assign me. */
+  assignedToMe: boolean;
+}
+
+/** Resolves (or unresolves) a thread on GitHub right away. Replies with `review_threads`. */
+export interface ResolveThreadRequest {
+  type: 'resolve_thread';
+  requestId: string;
+  pr: PrKey;
+  threadId: string;
+  resolved: boolean;
+}
+
+/** Ticks a file viewed (or not) on GitHub right away. Replies with `ack`. */
+export interface MarkViewedRequest {
+  type: 'mark_viewed';
+  requestId: string;
+  pr: PrKey;
+  path: string;
+  viewed: boolean;
+}
+
+/** Start reviewing › Assign me: adds me as assignee and, unless I'm the author, as a requested reviewer. Replies with `ack`. */
+export interface AssignMeRequest {
+  type: 'assign_me';
+  requestId: string;
+  pr: PrKey;
+}
+
+/** Posts every draft plus the summary as one review at `headSha`. Replies with `review_submitted` or an error event. */
+export interface SubmitReviewRequest {
+  type: 'submit_review';
+  requestId: string;
+  pr: PrKey;
+  headSha: string;
+  event: ReviewEvent;
+  summary: string;
+}
+
+export interface ReviewSubmittedMessage {
+  type: 'review_submitted';
+  requestId: string;
+  pr: PrKey;
+  event: ReviewEvent;
+  url: string;
+  comments: number;
+  replies: number;
+}
+
+// Agent help for writing a review (v3). Both only return text for the reviewer to edit.
+
+/** "Turn into comment": the chat answer about `anchor`, rewritten as one review comment. Replies with `draft_comment`. */
+export interface DraftCommentRequest {
+  type: 'draft_comment';
+  requestId: string;
+  pr: PrKey;
+  agent: AgentId;
+  model: string;
+  /** The review's commit; the agent reads the worktree there. */
+  headSha: string;
+  anchor: CommentAnchor;
+  /** The lines the question was about, as shown in the diff. */
+  lines?: string;
+  question: string;
+  answer: string;
+}
+
+export interface DraftCommentMessage {
+  type: 'draft_comment';
+  requestId: string;
+  pr: PrKey;
+  body: string;
+}
+
+/** Looks for what the pending comments miss. Sends `tool` events while it works, then `gap_check`. Cancel with `cancel`. */
+export interface GapCheckRequest {
+  type: 'gap_check';
+  requestId: string;
+  pr: PrKey;
+  agent: AgentId;
+  model: string;
+  headSha: string;
+}
+
+/** A comment the gap check drafted, on a new-side line that is in the diff. */
+export interface GapFinding {
+  id: string;
+  path: string;
+  line: number;
+  body: string;
+}
+
+export interface GapCheckMessage {
+  type: 'gap_check';
+  requestId: string;
+  pr: PrKey;
+  headSha: string;
+  agent: AgentId;
+  model: string;
+  /** How long it took. */
+  ms: number;
+  findings: GapFinding[];
+  /** Files the agent read; generated and lock files are left out and listed in `skipped`. */
+  checkedFiles: number;
+  skipped: { path: string; reason: string }[];
+}
+
 export type AppMessage =
   | ExtensionMessage
   | HelloRequest
@@ -411,7 +644,18 @@ export type AppMessage =
   | SettingsRequest
   | SaveSettingsRequest
   | PruneWorktreesRequest
-  | DiagnosticsRequest;
+  | DiagnosticsRequest
+  | ReviewDraftsRequest
+  | SaveDraftRequest
+  | DeleteDraftRequest
+  | SaveReviewSummaryRequest
+  | ReviewThreadsRequest
+  | ResolveThreadRequest
+  | MarkViewedRequest
+  | AssignMeRequest
+  | SubmitReviewRequest
+  | DraftCommentRequest
+  | GapCheckRequest;
 
 // Server -> app
 
@@ -422,7 +666,7 @@ export interface HelloResponse {
   protocol: number;
   /** GitHub login from `gh`, or null when unknown. */
   viewer: string | null;
-  capabilities: { workspace: true; inbox: boolean; labels: boolean; review: boolean; agents: AgentId[] };
+  capabilities: { workspace: true; inbox: boolean; labels: boolean; review: boolean; agents: AgentId[]; /** v3: reviews can be written to GitHub. */ write?: boolean };
 }
 
 export type AuthorState = 'waiting_on_reviewers' | 'waiting_on_me' | 'blocked_by_ci' | 'ready_to_merge';
@@ -488,6 +732,8 @@ export interface InboxItem {
   /** `state` is null for drafts. */
   author?: { state: AuthorState | null; since: string; reasons: string[] };
   ci: 'passing' | 'failing' | 'pending' | 'none';
+  /** Whose latest review approves the PR. `bot`: a review bot (GitHub App), which never counts as the approval a PR needs. */
+  approvals?: { login: string; bot: boolean }[];
   /** Set while I'm reviewing this PR (the inbox's "Reviewing" filter). */
   review?: ReviewState;
   /** Set when the PR is part of a stack: its base branch is another open PR's head, or another PR sits on top of it. */
@@ -578,6 +824,8 @@ export interface PrDiffMessage {
   baseSha: string;
   headSha: string;
   files: PrDiffFile[];
+  /** Present when the request asked for `since`. */
+  since?: { sha: string; commits: number };
 }
 
 export interface StoredTurn {
@@ -677,7 +925,12 @@ export type ServerMessage =
   | SetupChecksMessage
   | SettingsMessage
   | DiagnosticsMessage
-  | AckMessage;
+  | AckMessage
+  | ReviewDraftsMessage
+  | ReviewThreadsMessage
+  | ReviewSubmittedMessage
+  | DraftCommentMessage
+  | GapCheckMessage;
 
 export const PROGRESS_LABELS: Record<ProgressStep, string> = {
   finding_repo: 'Finding local clone',

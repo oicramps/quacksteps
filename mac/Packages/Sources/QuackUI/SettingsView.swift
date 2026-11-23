@@ -20,6 +20,8 @@ public struct SettingsView: View {
                 .tabItem { Label("Repos", systemImage: "folder") }
             SettingsPane(model: model) { AgentsTab(model: model) }
                 .tabItem { Label("Agents", systemImage: "sparkles") }
+            SettingsPane(model: model, needsServer: false) { ReviewsTab(model: model) }
+                .tabItem { Label("Reviews", systemImage: "checkmark.circle") }
             SettingsPane(model: model, needsServer: false) { NotificationsTab(prefs: prefs) }
                 .tabItem { Label("Notifications", systemImage: "bell") }
             SettingsPane(model: model) { ServerTab(model: model) }
@@ -404,6 +406,23 @@ private struct ExtraPathSheet: View {
 }
 
 // MARK: - Notifications
+
+private struct ReviewsTab: View {
+    var model: AppModel
+
+    var body: some View {
+        @Bindable var model = model
+        Form {
+            Section {
+                Toggle("Ask to assign me when I start reviewing", isOn: $model.askToAssign)
+                caption("Assigning makes you the assignee and a requested reviewer on GitHub.")
+            } header: {
+                Text("Reviews")
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
 
 private struct NotificationsTab: View {
     var prefs: NotificationPrefs

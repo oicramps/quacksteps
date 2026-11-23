@@ -11,7 +11,7 @@ export const PROTOCOL_VERSION = 1;
  * PROTOCOL_VERSION: every v1 message keeps its shape. Kept separate because the
  * extension requires an exact PROTOCOL_VERSION match on the stdio host.
  */
-export const SOCKET_PROTOCOL_VERSION = 2;
+export const SOCKET_PROTOCOL_VERSION = 3;
 
 export const HOST_NAME = 'com.quack.companion';
 

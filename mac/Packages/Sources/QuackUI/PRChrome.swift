@@ -83,7 +83,9 @@ public struct PRBanner: View {
         } else if let review = store.review {
             switch review.phase {
             case .stale:
-                Banner(.warning, title: "\(newCommitsText(review)).", message: "Labels and chat are for \(shortSha(review.headSha)) until you update.") {
+                Banner(.warning, title: store.canWrite && store.pendingCount > 0 ? "New commits on this PR." : "\(newCommitsText(review)).", message: store.canWrite && store.pendingCount > 0
+                    ? "Your review is still on \(shortSha(review.headSha)). Updating keeps your \(store.pendingCount) pending \(store.pendingCount == 1 ? "comment" : "comments"); any on lines that changed get flagged."
+                    : "Labels and chat are for \(shortSha(review.headSha)) until you update.") {
                     Button("Update") { Task { await store.updateReview() } }
                 }
             case .failed:
@@ -284,6 +286,7 @@ public struct PRStatusBar: View {
                 freshness
                 ci
                 phase
+                submitStatus
                 Spacer(minLength: 0)
                 Label("Worktree is read-only", systemImage: "lock")
             }
@@ -305,6 +308,22 @@ public struct PRStatusBar: View {
             .accessibilityElement(children: .combine)
         } else {
             Text("Up to date")
+        }
+    }
+
+    @ViewBuilder private var submitStatus: some View {
+        if case let .sent(m) = store.submitState {
+            HStack(spacing: 5) {
+                Circle().fill(Tokens.success).frame(width: 7, height: 7)
+                Text("Review sent · \(m.event.sentLabel)")
+            }
+            .accessibilityElement(children: .combine)
+        } else if store.canWrite, store.pendingCount > 0 {
+            HStack(spacing: 5) {
+                Circle().fill(Color.orange).frame(width: 7, height: 7)
+                Text("\(store.pendingCount) pending · not sent yet").foregroundStyle(Tokens.warning)
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 

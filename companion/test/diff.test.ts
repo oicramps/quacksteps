@@ -136,3 +136,51 @@ test('a failed fetch says how to check git access', async () => {
   });
   await assert.rejects(t.svc.get(PR, A), (err: unknown) => err instanceof DiffError && err.code === 'fetch_failed' && /git -C/.test(err.fixSteps[0].command!));
 });
+
+test('since my last review: only what changed after that commit, from real git', async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'quack-since-'));
+  try {
+    git(repo, ['init', '-q', '-b', 'main']);
+    fs.writeFileSync(path.join(repo, 'a.ts'), 'one\n');
+    fs.writeFileSync(path.join(repo, 'b.ts'), 'two\n');
+    git(repo, ['add', '.']);
+    git(repo, ['commit', '-qm', 'base']);
+    const base = git(repo, ['rev-parse', 'HEAD']);
+    fs.writeFileSync(path.join(repo, 'a.ts'), 'one\nreviewed\n');
+    git(repo, ['commit', '-qam', 'reviewed']);
+    const reviewed = git(repo, ['rev-parse', 'HEAD']);
+    fs.writeFileSync(path.join(repo, 'b.ts'), 'two\nlater\n');
+    git(repo, ['commit', '-qam', 'later 1']);
+    fs.writeFileSync(path.join(repo, 'c.ts'), 'new\n');
+    git(repo, ['add', '.']);
+    git(repo, ['commit', '-qm', 'later 2']);
+    const head = git(repo, ['rev-parse', 'HEAD']);
+
+    const svc = new DiffService({
+      config: () => config,
+      ops: { ...realDiffOps, findClone: async () => ({ clone: repo, blockedRoots: [] }), context: async () => ({ baseSha: base, headSha: head }) },
+    });
+    const since = await svc.get(PR, head, reviewed);
+    assert.deepEqual(since.files.map((f) => f.path).sort(), ['b.ts', 'c.ts'], 'a.ts was already reviewed');
+    assert.deepEqual(since.since, { sha: reviewed, commits: 2 });
+    const all = await svc.get(PR, head);
+    assert.deepEqual(all.files.map((f) => f.path).sort(), ['a.ts', 'b.ts', 'c.ts']);
+    assert.equal(all.since, undefined);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('since my last review without the commit locally falls back to GitHub compare', async () => {
+  const calls: string[] = [];
+  const t = service({
+    countCommits: async () => null,
+    rest: async (p) => {
+      calls.push(p);
+      return `{"commits":3}\n${JSON.stringify({ filename: 'b.ts', status: 'modified', additions: 1, deletions: 0, patch: '@@ -1 +1,2 @@\n two\n+later' })}`;
+    },
+  });
+  const d = await t.svc.get(PR, B, A);
+  assert.deepEqual(calls, [REST.compare('Acme', 'Web', A, B)]);
+  assert.deepEqual([d.files.map((f) => f.path), d.since], [['b.ts'], { sha: A, commits: 3 }]);
+});

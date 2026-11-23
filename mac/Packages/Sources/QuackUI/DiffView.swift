@@ -54,7 +54,8 @@ public struct DiffView: View {
         if let diff = store.diff, !diff.files.isEmpty {
             DiffWebView(
                 store: store, diff: diff, labels: store.visibleLabels, layout: layout, scheme: colorScheme,
-                selectedFile: store.selectedFile, controller: controller, onAsk: onAsk
+                selectedFile: store.selectedFile, controller: controller,
+                review: ReviewPayload.json(store: store, headSha: diff.headSha), editorRequest: store.editorRequest, onAsk: onAsk
             )
         } else if store.diff != nil {
             EmptyState(symbol: "doc.text", headline: "No changes to show.", message: "This pull request has no file changes.")
@@ -113,6 +114,10 @@ private struct DiffWebView: NSViewRepresentable {
     var scheme: ColorScheme
     var selectedFile: String?
     var controller: DiffController
+    /// Threads, pending comments and viewed ticks for the page, as JSON.
+    var review: String
+    /// "Turn into comment": a drafted comment to open in the page's editor.
+    var editorRequest: EditorRequest?
     var onAsk: () -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -152,6 +157,8 @@ private struct DiffWebView: NSViewRepresentable {
         private var ready = false
         private var sentDiffKey: String?
         private var sentLabels: String?
+        private var sentReview: String?
+        private var sentEditorRequest: String?
         private var sentLayout: DiffLayout?
         private var sentScheme: ColorScheme?
         private var filesJSON = "[]"
@@ -204,6 +211,9 @@ private struct DiffWebView: NSViewRepresentable {
             case "ready":
                 ready = true
                 sentDiffKey = nil
+                sentReview = nil
+                // A reloaded page doesn't reopen an editor that was already shown.
+                sentEditorRequest = parent.editorRequest?.id
                 sentLabels = nil
                 sentLayout = nil
                 sentScheme = nil
@@ -235,6 +245,46 @@ private struct DiffWebView: NSViewRepresentable {
                 parent.onAsk()
             case "openGitHub":
                 NSWorkspace.shared.open(parent.store.pr.githubURL.appendingPathComponent("files"))
+            case "saveDraft":
+                guard let d = body["draft"] as? [String: Any], let text = d["body"] as? String else { return }
+                let store = parent.store
+                let id = d["id"] as? String
+                let origin: DraftOrigin = store.drafts.first { $0.id == id }?.origin ?? (d["origin"] as? String == "agent" ? .agent : .me)
+                var input = DraftInput(id: id, headSha: parent.diff.headSha, body: text, origin: origin)
+                if let a = d["anchor"] as? [String: Any], let path = a["path"] as? String,
+                   let side = (a["side"] as? String).flatMap(DiffSide.init(rawValue:)), let line = (a["line"] as? NSNumber)?.intValue {
+                    input.anchor = CommentAnchor(path: path, side: side, line: line, startLine: (a["startLine"] as? NSNumber)?.intValue)
+                } else if let thread = d["replyTo"] as? String {
+                    input.replyTo = thread
+                    // A reply keeps the commit it was first written on; only comments on lines depend on it.
+                    if let id, let old = store.drafts.first(where: { $0.id == id }) { input.headSha = old.headSha }
+                } else { return }
+                Task { @MainActor [weak self] in
+                    let ok = await store.saveDraft(input)
+                    self?.webView?.evaluateJavaScript("window.quack.draftSaved(\(ok))", completionHandler: nil)
+                }
+            case "redraft":
+                let store = parent.store
+                Task { await store.redraft() }
+            case "deleteDraft":
+                guard let id = body["id"] as? String else { return }
+                let store = parent.store
+                Task { if store.outdated[id] != nil { await store.deleteOutdated(id) } else { await store.deleteDraft(id) } }
+            case "moveOutdated":
+                guard let id = body["id"] as? String else { return }
+                let store = parent.store
+                Task { await store.moveOutdated(id) }
+            case "resolveThread":
+                guard let id = body["id"] as? String, let resolved = body["resolved"] as? Bool else { return }
+                let store = parent.store
+                Task { await store.resolveThread(id, resolved: resolved) }
+            case "markViewed":
+                guard let path = body["path"] as? String, let viewed = body["viewed"] as? Bool else { return }
+                let store = parent.store
+                Task { await store.setViewed(path, viewed) }
+            case "copy":
+                guard let text = body["text"] as? String else { return }
+                copyToPasteboard(text)
             default:
                 break  // selectLines: the selection lives in the page until it is asked about.
             }
@@ -275,6 +325,20 @@ private struct DiffWebView: NSViewRepresentable {
                 web.evaluateJavaScript("window.quack.render(JSON.parse(\(jsLiteral(payload))))", completionHandler: nil)
                 // The page restores its own scroll position; a sidebar selection made before the first render still applies.
                 if diffChanged { lastScrolled = nil }
+            }
+            // Review state follows the files it belongs to.
+            if sentReview != p.review, sentDiffKey != nil {
+                sentReview = p.review
+                web.evaluateJavaScript("window.quack.setReview(JSON.parse(\(jsLiteral(p.review))))", completionHandler: nil)
+            }
+            if let request = p.editorRequest, request.id != sentEditorRequest, sentDiffKey != nil {
+                sentEditorRequest = request.id
+                var anchor: [String: Any] = ["path": request.anchor.path, "side": request.anchor.side.rawValue, "line": request.anchor.line]
+                if let start = request.anchor.startLine { anchor["startLine"] = start }
+                let payload: [String: Any] = ["anchor": anchor, "body": request.body, "redrafting": request.redrafting]
+                if let data = try? JSONSerialization.data(withJSONObject: payload) {
+                    web.evaluateJavaScript("window.quack.openDraftEditor(JSON.parse(\(jsLiteral(String(decoding: data, as: UTF8.self)))))", completionHandler: nil)
+                }
             }
             if !restoredAfterReady, sentDiffKey != nil {
                 restoredAfterReady = true
@@ -346,4 +410,48 @@ private enum DiffTheme {
         "pick-bg": "rgba(255,152,15,.17)", "cream": "rgba(255,204,51,.1)", "logo-ink": "#f3f5f7",
         "font": "-apple-system,BlinkMacSystemFont,\"SF Pro Text\",system-ui,sans-serif", "mono": "ui-monospace,\"SF Mono\",Menlo,monospace",
     ]
+}
+
+
+// MARK: - Review payload
+
+/// What the page needs to draw threads, pending comments and viewed ticks. Names, colours and
+/// relative times are worked out here so the page stays dumb.
+@MainActor
+enum ReviewPayload {
+    static func json(store: PRStore, headSha: String) -> String {
+        let me = store.reviewViewer ?? ""
+        let relative = RelativeDateTimeFormatter()
+        relative.unitsStyle = .full
+        func when(_ iso: String) -> String { ISODate.parse(iso).map { relative.localizedString(for: $0, relativeTo: .now) } ?? "" }
+        // Comments on lines show only on the commit they were written for; replies go anywhere.
+        // Outdated ones (lines changed in a newer commit) show flagged on the same line numbers.
+        let drafts: [[String: Any]] = store.drafts.filter { $0.replyTo != nil || $0.headSha == headSha || store.outdated[$0.id] != nil }.map { d in
+            var o: [String: Any] = [
+                "id": d.id, "path": d.anchor?.path ?? NSNull(), "side": d.anchor?.side.rawValue ?? NSNull(),
+                "line": d.anchor?.line ?? NSNull(), "startLine": d.anchor?.startLine ?? NSNull(),
+                "replyTo": d.replyTo ?? NSNull(), "body": d.body, "origin": d.origin.rawValue,
+            ]
+            if let out = store.outdated[d.id] { o["outdated"] = ["old": out.old, "now": out.now, "changedIn": out.changedIn] }
+            return o
+        }
+        let threads: [[String: Any]] = store.ghThreads.map { t in
+            [
+                "id": t.id, "path": t.path, "side": t.side.rawValue, "line": t.line ?? NSNull(), "startLine": t.startLine ?? NSNull(),
+                "isResolved": t.isResolved, "isOutdated": t.isOutdated, "canResolve": t.canResolve, "canReply": t.canReply,
+                "comments": t.comments.map { c in
+                    ["author": c.author, "initials": initials(c.author), "color": Tokens.avatarCSS(c.author), "when": when(c.createdAt), "body": c.body]
+                },
+            ]
+        }
+        var viewed: [String: Bool] = [:]
+        for (path, state) in store.viewed where state == .viewed { viewed[path] = true }
+        let payload: [String: Any] = [
+            "enabled": store.canWrite,
+            "me": ["initials": initials(me.isEmpty ? "you" : me), "color": Tokens.avatarCSS(me)],
+            "drafts": drafts, "threads": threads, "viewed": viewed,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
+    }
 }

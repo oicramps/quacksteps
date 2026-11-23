@@ -145,18 +145,21 @@ func selectionSelfCheck(_ view: some View, labels: String) {
     }
     let result = js("""
     (() => {
-      const gutters = () => [...document.querySelectorAll('[data-g]')].filter(e => e.closest('[data-i]'));
+      const gutters = () => [...document.querySelectorAll('[data-g]')].filter(e => e.closest('[data-i]') && !e.dataset.plus);
       const g = gutters();
       const a = g[2].getBoundingClientRect(), b = g[6].getBoundingClientRect();
       const opts = (r) => ({ bubbles: true, cancelable: true, button: 0, clientX: r.x + r.width/2, clientY: r.y + r.height/2 });
       g[2].dispatchEvent(new MouseEvent('mousedown', opts(a)));
       window.dispatchEvent(new MouseEvent('mousemove', opts(b)));
       const midDrag = document.querySelectorAll('.pick').length;
-      const askButton = document.querySelector('.askpill button');
       window.quack.render(JSON.parse(\(jsString(labels))));
-      const buttonKept = !!askButton && askButton.isConnected;
       window.dispatchEvent(new MouseEvent('mouseup', opts(b)));
       const picked = document.querySelectorAll('.pick').length;
+      // The Ask button shows once the drag ends, and survives the next label update.
+      const askButton = document.querySelector('.askpill button');
+      window.quack.render(JSON.parse(\(jsString(labels.replacingOccurrences(of: "New module", with: "Changed module")))));
+      const buttonKept = !!askButton && askButton.isConnected;
+
       askButton && askButton.click();
       const ta = document.getElementById('ask-text');
       if (!ta) return JSON.stringify({ midDrag, buttonKept, picked, card: false });
@@ -194,6 +197,238 @@ func selectionSelfCheck(_ view: some View, labels: String) {
     }
     window.orderOut(nil)
     let ok = result.contains("\"buttonKept\":true") && result.contains("\"card\":true") && result.contains("\"text\":\"why?\"") && result.contains("\"focused\":true") && !result.contains("\"picked\":0") && plus.contains("\"card\":true") && plus.contains("1 line selected") && plus.contains("\"focused\":\"ask-text\"")
+    print(ok ? "PASS" : "FAIL")
+    exit(ok ? 0 : 1)
+}
+
+@MainActor
+func writeBoards(inbox: InboxMessage, prKey: PrKey, prReview: ReviewState, prLabels: RiskLabelsMessage, prDiff: PrDiffMessage, ws: Workspace) {
+    // Writing reviews: viewed ticks, the since-last-review banner, a failed write.
+    let writeHello: HelloResponse = decode(#"{"requestId":"h","version":"0.3.0","protocol":3,"viewer":"dev","capabilities":{"workspace":true,"inbox":true,"labels":true,"review":true,"agents":["cursor"],"write":true}}"#)
+    let writeModel = AppModel(preview: inbox, connection: .connected(writeHello), checks: checks, settings: settings, agents: agents)
+    let lastRev: LastReview = decode(#"{"commit":"5d2e8b1c0a9f4e7d6c3b2a1908f7e6d5c4b3a291","submittedAt":"\#(iso(hoursAgo: 49))","state":"COMMENTED"}"#)
+    let viewedStates: [String: ViewedState] = [
+        "src/map/clusterPins.test.ts": .viewed, "yarn.lock": .viewed, "src/api/tripPins.ts": .dismissed,
+    ]
+    let writeStore = PRStore(preview: prKey, model: writeModel, review: prReview, labels: prLabels, diff: prDiff)
+    writeStore.previewReview(viewed: viewedStates, lastReview: lastRev, viewer: "dev")
+    snapshot("pr-sidebar-viewed", size: CGSize(width: 320, height: 640)) { NavigationStack { RankedFilesSidebar(store: writeStore, model: writeModel) } }
+    let sinceDiff: PrDiffMessage = decode(#"""
+    {"requestId":"d","pr":{"owner":"acme","repo":"web","number":4127},"baseSha":"5d2e8b1c0a9f4e7d6c3b2a1908f7e6d5c4b3a291","headSha":"\#(sha)","since":{"sha":"5d2e8b1c0a9f4e7d6c3b2a1908f7e6d5c4b3a291","commits":3},"files":[
+     {"path":"src/map/clusterPins.ts","status":"modified","additions":21,"deletions":4,"binary":false,"truncated":false},
+     {"path":"src/api/tripPins.ts","status":"modified","additions":6,"deletions":2,"binary":false,"truncated":false},
+     {"path":"src/map/clusterPins.test.ts","status":"modified","additions":12,"deletions":0,"binary":false,"truncated":false}]}
+    """#)
+    let sinceStore = PRStore(preview: prKey, model: writeModel, review: prReview, labels: prLabels, diff: sinceDiff)
+    sinceStore.previewReview(viewed: viewedStates, lastReview: lastRev, viewer: "dev")
+    sinceStore.writeError = ServerError(code: .badRequest, message: "GitHub said the token can’t review this repo.", fixSteps: [FixStep(text: "Refresh your GitHub login.", command: "gh auth refresh -h github.com -s repo")])
+    snapshot("pr-sidebar-since", size: CGSize(width: 320, height: 420)) { NavigationStack { RankedFilesSidebar(store: sinceStore, model: writeModel) } }
+    snapshot("pr-tab-since", size: CGSize(width: 1200, height: 700)) { NavigationStack { PRTabView(model: writeModel, workspace: ws, store: sinceStore) } }
+
+    // Submit review sheet: the gap check section.
+    func gapMessage(_ findings: String) -> GapCheckMessage {
+        decode(#"{"requestId":"g","pr":{"owner":"acme","repo":"web","number":4127},"headSha":"\#(sha)","agent":"cursor","model":"auto","ms":48000,"findings":[\#(findings)],"checkedFiles":6,"skipped":[{"path":"yarn.lock","reason":"lock file"},{"path":"src/gen/schema.ts","reason":"generated"}]}"#)
+    }
+    let gapFindings = gapMessage(#"""
+    {"id":"g1","path":"src/map/clusterPins.ts","line":42,"body":"clusterPins returns early when the list is empty, but the caller in TripMap still reads the first cluster. That throws for a trip with no pins."},
+    {"id":"g2","path":"src/api/tripPins.ts","line":18,"body":"There is no test for a trip whose pins all share one coordinate. They collapse into a single cluster of zero width."}
+    """#)
+    let gapStore = PRStore(preview: prKey, model: writeModel, review: prReview, labels: prLabels, diff: prDiff)
+    func gapBoard(_ name: String, _ height: CGFloat, _ state: GapCheckState?, kept: [String: String] = [:]) {
+        snapshot(name, size: CGSize(width: 620, height: height)) { GapCheckView(store: gapStore, previewState: state, previewKept: kept).padding(10) }
+    }
+    gapBoard("gap-idle", 110, .idle)
+    gapBoard("gap-running", 90, .running(started: Date().addingTimeInterval(-74), activity: ["Reading src/map/clusterPins.ts", "Searching for callers of clusterPins"]))
+    gapBoard("gap-done", 420, .done(gapFindings), kept: ["g2": "d1"])
+    gapBoard("gap-done-empty", 100, .done(gapMessage("")))
+    gapBoard("gap-failed", 80, .failed(ServerError(code: .agentFailed, message: "Cursor stopped after 90 seconds without an answer.")))
+
+    // Submit review sheet, sent toast, failed panel.
+    func draftJSON(_ id: String, _ path: String, _ line: Int, _ start: Int?, _ body: String, _ origin: String) -> String {
+        #"{"id":"\#(id)","headSha":"\#(sha)","anchor":{"path":"\#(path)","side":"RIGHT","line":\#(line)\#(start.map { #","startLine":\#($0)"# } ?? "")},"body":"\#(body)","origin":"\#(origin)","createdAt":"\#(iso(hoursAgo: 1))","updatedAt":"\#(iso(hoursAgo: 1))"}"#
+    }
+    let submitDrafts: [DraftComment] = decode("[" + [
+        draftJSON("s1", "src/map/clusterPins.ts", 42, 38, "This returns early on an empty list, but TripMap still reads the first cluster. Guard the caller too.", "me"),
+        draftJSON("s2", "src/api/tripPins.ts", 18, nil, "No test covers a trip whose pins share one coordinate. They collapse into a zero-width cluster.", "gap_check"),
+        draftJSON("s3", "src/map/clusterPins.test.ts", 12, nil, "Nit: name this case after the behaviour, not the input.", "me"),
+    ].joined(separator: ",") + "]")
+    let submitStore = PRStore(preview: prKey, model: writeModel, review: prReview, labels: prLabels, diff: prDiff)
+    submitStore.previewReview(drafts: submitDrafts, viewed: viewedStates, viewer: "dev")
+    submitStore.previewSubmit(.idle, summary: "Clustering looks right overall. The empty-list path needs a guard before this can merge.", event: .requestChanges)
+    snapshot("submit-sheet", size: CGSize(width: 640, height: 760)) { SubmitReviewSheet(store: submitStore) }
+    let sentMessage: ReviewSubmittedMessage = decode(#"{"requestId":"r","pr":{"owner":"acme","repo":"web","number":4127},"event":"REQUEST_CHANGES","url":"https://github.com/acme/web/pull/4127#pullrequestreview-1","comments":3,"replies":1}"#)
+    snapshot("submit-sent", size: CGSize(width: 700, height: 100)) { SubmitSentToast(store: submitStore, message: sentMessage).padding(20) }
+    let deniedError = ServerError(code: .ghWriteDenied, message: "Resource not accessible by personal access token.", fixSteps: [FixStep(text: "Give the gh login permission to write to repos.", command: "gh auth refresh --hostname github.com --scopes repo")])
+    snapshot("submit-failed", size: CGSize(width: 640, height: 260)) {
+        SubmitFailedPanel(store: submitStore, error: deniedError, event: .requestChanges, summary: submitStore.reviewSummary).padding(20)
+    }
+}
+
+/// Self-check for writing reviews in the diff: threads and pending comments render under their lines,
+/// the selection bar offers Comment, C opens the editor, a failed save keeps the text, a new thread
+/// arriving mid-typing keeps the focus, and a successful save closes the editor. Writes a picture too.
+@MainActor
+func reviewSelfCheck(_ view: some View, out: String?) {
+    let size = CGSize(width: 1200, height: 760)
+    let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
+    let window = NSWindow(contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+    window.contentView = host
+    window.setFrameOrigin(CGPoint(x: -10_000, y: -10_000))
+    window.makeKeyAndOrderFront(nil)
+    RunLoop.main.run(until: Date().addingTimeInterval(3))
+    guard let web = findWebView(host) else { print("FAIL: no web view"); exit(1) }
+    func js(_ code: String) -> String {
+        var result = "?"
+        var done = false
+        web.evaluateJavaScript(code) { r, e in result = r.map { "\($0)" } ?? "error: \(e.map { "\($0)" } ?? "nil")"; done = true }
+        while !done { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        return result
+    }
+    let shown = js("""
+    JSON.stringify({ threads: document.querySelectorAll('.thread[data-thread]').length,
+      resolved: document.querySelectorAll('.thread.resolved').length,
+      drafts: [...document.querySelectorAll('.ptag')].length,
+      dots: document.querySelectorAll('.cdot').length,
+      viewed: document.querySelectorAll('.fh .viewed').length,
+      text: (document.querySelector('.thread[data-thread] .cbody') || {}).textContent })
+    """)
+    print("review rows:", shown)
+    func picture(_ name: String) {
+        guard let out else { return }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        var shot: NSImage?
+        web.takeSnapshot(with: nil) { image, _ in shot = image }
+        while shot == nil { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        if let tiff = shot?.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: out).appendingPathComponent("\(name).png"))
+        }
+    }
+    // The selection bar on lines 9–11, with the threads and the pending comment around it.
+    _ = js("(() => { const byLine = (n) => [...document.querySelectorAll('.dl')].find(d => d.children[1] && d.children[1].textContent === String(n)).children[1]; const s = byLine(9), e = byLine(11); const o = (el) => { const r = el.getBoundingClientRect(); return { bubbles: true, cancelable: true, button: 0, clientX: r.x + r.width/2, clientY: r.y + r.height/2 }; }; const ob = o(e); s.dispatchEvent(new MouseEvent('mousedown', o(s))); const afterDown = document.querySelectorAll('.pick').length; const hit = document.elementFromPoint(ob.clientX, ob.clientY); window.dispatchEvent(new MouseEvent('mousemove', ob)); const afterMove = document.querySelectorAll('.pick').length; window.dispatchEvent(new MouseEvent('mouseup', ob)); return JSON.stringify({ afterDown, afterMove, end: document.querySelectorAll('.pick').length, hit: hit && hit.className, y: ob.clientY }); })()")
+    RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+    picture("diff-review-threads")
+    _ = js("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 'ok'")
+    let flow = js("""
+    (() => {
+      const byLine = (n) => [...document.querySelectorAll('.dl')].find(d => d.children[1] && d.children[1].textContent === String(n)).children[1];
+      const start = byLine(9), end = byLine(11);
+      const a = start.getBoundingClientRect(), b = end.getBoundingClientRect();
+      const o = (r) => ({ bubbles: true, cancelable: true, button: 0, clientX: r.x + r.width/2, clientY: r.y + r.height/2 });
+      start.dispatchEvent(new MouseEvent('mousedown', o(a)));
+      window.dispatchEvent(new MouseEvent('mousemove', o(b)));
+      window.dispatchEvent(new MouseEvent('mouseup', o(b)));
+      const bar = document.querySelector('.actbar');
+      const barText = bar ? bar.textContent : null;
+      document.getElementById('scroller').dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }));
+      const ta = document.getElementById('ed-text');
+      if (!ta) return JSON.stringify({ barText, editor: false });
+      ta.value = 'Why a magic number here?';
+      ta.dispatchEvent(new Event('input'));
+      window.quack.draftSaved(false);
+      const keptAfterFailure = !!document.getElementById('ed-text') && document.getElementById('ed-text').value;
+      return JSON.stringify({ barText, editor: true, where: document.getElementById('ed-where').textContent, focused: document.activeElement === ta, keptAfterFailure });
+    })()
+    """)
+    print("comment flow:", flow)
+    // A thread arrives (another poll) while typing: the editor keeps its text and focus.
+    let pushed = js("""
+    (() => {
+      const before = document.getElementById('ed-text');
+      before.setSelectionRange(3, 3);
+      window.quack.setReview({ enabled: true, me: { initials: 'DE', color: '#2563eb' }, drafts: [], viewed: {}, threads: [{ id: 'PRRT_new', path: 'src/long.ts', side: 'RIGHT', line: 40, startLine: null, isResolved: false, isOutdated: false, canResolve: true, canReply: true, comments: [{ author: 'pat-author', initials: 'PA', color: '#7a5af8', when: 'just now', body: 'Pushed a fix' }] }] });
+      const ta = document.getElementById('ed-text');
+      return JSON.stringify({ same: ta === before, focused: document.activeElement === ta, caret: ta.selectionStart, text: ta.value, threads: document.querySelectorAll('.thread[data-thread]').length });
+    })()
+    """)
+    print("thread arrives while typing:", pushed)
+    picture("diff-review-editor")
+    let saved = js("window.quack.draftSaved(true); JSON.stringify({ editor: !!document.getElementById('ed-text') && document.getElementById('ed-text').isConnected, bar: !!document.querySelector('.actbar') })")
+    print("after a successful save:", saved)
+    // "Turn into comment": the agent's draft opens on its lines; Redraft disables it, then fills new text.
+    let agent = js("""
+    (() => {
+      window.quack.openDraftEditor({ anchor: { path: 'src/long.ts', side: 'RIGHT', line: 30, startLine: 28 }, body: 'Could `line30` be a constant?' });
+      const ta = document.getElementById('ed-text');
+      const opened = { text: ta && ta.value, where: document.getElementById('ed-where').textContent, tag: !document.getElementById('ed-tag').hidden,
+        redraft: !document.getElementById('ed-redraft').hidden, cancel: document.getElementById('ed-cancel').textContent, focused: document.activeElement === ta };
+      window.quack.openDraftEditor({ anchor: { path: 'src/long.ts', side: 'RIGHT', line: 30, startLine: 28 }, body: '', redrafting: true });
+      const busy = { disabled: ta.disabled, label: document.getElementById('ed-redraft').textContent };
+      window.quack.openDraftEditor({ anchor: { path: 'src/long.ts', side: 'RIGHT', line: 30, startLine: 28 }, body: 'Why is `line30` 30?' });
+      return JSON.stringify({ opened, busy, after: { text: ta.value, disabled: ta.disabled, editors: document.querySelectorAll('#ed-text').length } });
+    })()
+    """)
+    print("turn into comment:", agent)
+    picture("diff-review-agent")
+    // Split view: the bar sits under the side the lines were selected on.
+    let split = js("""
+    (() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      window.quack.setLayout('split');
+      const gut = (n) => [...document.querySelectorAll('.half[data-side=new] .g')].find(g => g.textContent === String(n));
+      gut(9).scrollIntoView({ block: 'center' });
+      const s = gut(9), e = gut(11);
+      const o = (el) => { const r = el.getBoundingClientRect(); return { bubbles: true, cancelable: true, button: 0, clientX: r.x + r.width/2, clientY: r.y + r.height/2 }; };
+      const oe = o(e);
+      s.dispatchEvent(new MouseEvent('mousedown', o(s)));
+      window.dispatchEvent(new MouseEvent('mousemove', oe));
+      window.dispatchEvent(new MouseEvent('mouseup', oe));
+      const bar = document.querySelector('.actbar'), half = s.closest('.half');
+      return JSON.stringify({ bar: !!bar, onNewSide: !!bar && bar.getBoundingClientRect().left >= half.getBoundingClientRect().left, label: bar && bar.querySelector('.lbl').textContent });
+    })()
+    """)
+    print("split view bar:", split)
+    // The comment editor opens under the right side too.
+    let splitEditor = js("""
+    (() => {
+      document.getElementById('scroller').dispatchEvent(new KeyboardEvent('keydown', { key: 'c', bubbles: true }));
+      const ta = document.getElementById('ed-text');
+      const half = document.querySelector('.half[data-side=new]');
+      return JSON.stringify({ editor: !!ta, right: !!ta && ta.closest('.thread').getBoundingClientRect().left >= half.getBoundingClientRect().left, rowRs: !!ta && ta.closest('.row').classList.contains('rs') });
+    })()
+    """)
+    print("split view editor:", splitEditor)
+    picture("diff-review-split")
+    // A pending comment whose lines changed in a newer commit: flagged, with Move and Delete.
+    let outdatedShown = js("""
+    (() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      window.quack.setLayout('unified');
+      window.quack.setReview({ enabled: true, me: { initials: 'DE', color: '#2563eb' }, threads: [], viewed: {}, drafts: [{ id: 'd-old', path: 'src/long.ts', side: 'RIGHT', line: 12, startLine: null, replyTo: null, body: 'Why 12?', origin: 'me', outdated: { old: ['const line12 = 12;'], now: ['const line12 = 120;'], changedIn: 'c3d8e11' } }] });
+      const t = [...document.querySelectorAll('.otag')].find(x => x.textContent === 'Outdated');
+      const box = t && t.closest('.thread');
+      return JSON.stringify({ flagged: !!t, note: box && box.querySelector('.tc.outdated .l3').textContent, move: !!box && [...box.querySelectorAll('button')].some(b => b.textContent === 'Move to new line' && !b.disabled), lines: box && box.querySelectorAll('.ol').length });
+    })()
+    """)
+    print("outdated comment:", outdatedShown)
+    // Viewed folds the file to its header, as on GitHub; the chevron unfolds and folds it by hand,
+    // and unticking Viewed opens it again.
+    let folding = js("""
+    (() => {
+      const count = () => Number(document.getElementById('scroller').getAttribute('aria-rowcount'));
+      const head = () => document.querySelector('#content .fh');
+      window.quack.setReview({ enabled: true, me: { initials: 'DE', color: '#2563eb' }, threads: [], drafts: [], viewed: { 'src/long.ts': true } });
+      const viewed = count();
+      head().querySelector('.fold').click();
+      const unfolded = count();
+      head().querySelector('.fold').click();
+      const refolded = count();
+      head().querySelector('.viewed').click();
+      const unticked = count();
+      return JSON.stringify({ viewed, unfolded, refolded, unticked, chevron: !!head().querySelector('.fold[aria-expanded=true]') });
+    })()
+    """)
+    print("folding:", folding)
+    _ = js("window.quack.setReview({ enabled: true, me: { initials: 'DE', color: '#2563eb' }, threads: [], drafts: [], viewed: { 'src/long.ts': true } }); true")
+    picture("diff-review-folded")
+    picture("diff-review-outdated")
+    window.orderOut(nil)
+    let ok = shown.contains("\"threads\":2") && shown.contains("\"resolved\":1") && shown.contains("\"drafts\":1") && !shown.contains("\"dots\":0")
+        && !shown.contains("\"viewed\":0") && flow.contains("Comment") && flow.contains("\"focused\":true") && flow.contains("magic number")
+        && flow.contains("lines 9–11") && pushed.contains("\"same\":true") && pushed.contains("\"focused\":true") && pushed.contains("\"caret\":3")
+        && saved.contains("\"editor\":false") && saved.contains("\"bar\":false") && agent.contains("\"where\":\"on lines 28–30\"") && agent.contains("\"tag\":true")
+        && agent.contains("\"cancel\":\"Discard\"") && agent.contains("\"disabled\":true,\"label\":\"Redrafting…\"")
+        && agent.contains("\"text\":\"Why is `line30` 30?\",\"disabled\":false,\"editors\":1") && split.contains("\"onNewSide\":true,\"label\":\"Lines 9–11\"") && splitEditor.contains("\"right\":true,\"rowRs\":true") && outdatedShown.contains("\"flagged\":true,\"note\":\"line 12 changed in c3d8e11\",\"move\":true,\"lines\":2")
+        && folding.contains("\"viewed\":1,") && folding.contains("\"refolded\":1,") && !folding.contains("\"unfolded\":1,") && !folding.contains("\"unticked\":1,") && folding.contains("\"chevron\":true")
     print(ok ? "PASS" : "FAIL")
     exit(ok ? 0 : 1)
 }
@@ -264,6 +499,18 @@ MainActor.assumeIsolated {
     let deepLabels: RiskLabelsMessage = decode(#"{"requestId":"l","pr":{"owner":"acme","repo":"web","number":4127},"headSha":"\#(sha)","status":"ready","agent":"cursor","model":"auto","files":[\#(deepFiles.enumerated().map { #"{"path":"\#($1.0)","risk":"\#($1.1)","reason":"\#($1.2)","rank":\#($0),"source":"agent"}"# }.joined(separator: ","))]}"#)
     let deepStore = PRStore(preview: prKey, model: model, review: prReview, labels: deepLabels, diff: deepDiff)
     snapshot("pr-sidebar-deep", size: CGSize(width: 320, height: 640)) { NavigationStack { RankedFilesSidebar(store: deepStore, model: model) } }
+    if ProcessInfo.processInfo.environment["QUACK_REVIEW_CHECK"] != nil {
+        let writeHello: HelloResponse = decode(#"{"requestId":"h","version":"0.3.0","protocol":3,"viewer":"dev","capabilities":{"workspace":true,"inbox":true,"labels":true,"review":true,"agents":["cursor"],"write":true}}"#)
+        let writeModel = AppModel(preview: inbox, connection: .connected(writeHello), checks: checks, settings: settings, agents: agents)
+        let longPatch = "@@ -0,0 +1,60 @@\\n" + (1...60).map { "+const line\($0) = \($0);" }.joined(separator: "\\n") + "\\n"
+        let diff: PrDiffMessage = decode(#"{"requestId":"d","pr":{"owner":"acme","repo":"web","number":4127},"baseSha":"b","headSha":"\#(sha)","files":[{"path":"src/long.ts","status":"added","additions":60,"deletions":0,"binary":false,"truncated":false,"patch":"\#(longPatch)"}]}"#)
+        let store = PRStore(preview: prKey, model: writeModel, review: prReview, labels: nil, diff: diff)
+        let threads: [ReviewThread] = decode(#"[{"id":"PRRT_1","path":"src/long.ts","side":"RIGHT","line":4,"startLine":null,"originalLine":4,"isResolved":false,"isOutdated":false,"canResolve":true,"canReply":true,"comments":[{"id":"c1","author":"pat-author","body":"Should `line4` be a constant?","createdAt":"\#(iso(hoursAgo: 30))","url":"u"},{"id":"c2","author":"dev","body":"Yes, will do.","createdAt":"\#(iso(hoursAgo: 20))","url":"u"}]},{"id":"PRRT_2","path":"src/long.ts","side":"RIGHT","line":30,"startLine":null,"originalLine":30,"isResolved":true,"isOutdated":false,"canResolve":true,"canReply":true,"comments":[{"id":"c3","author":"sam-other","body":"Can this throw?","createdAt":"\#(iso(hoursAgo: 50))","url":"u"}]}]"#)
+        let drafts: [DraftComment] = decode(#"[{"id":"0b9f3c1e-0000-4000-8000-000000000001","headSha":"\#(sha)","anchor":{"path":"src/long.ts","side":"RIGHT","line":22,"startLine":20},"body":"Where does `22` come from?","origin":"me","createdAt":"\#(iso(hoursAgo: 1))","updatedAt":"\#(iso(hoursAgo: 1))"}]"#)
+        // Viewed, then changed: ticked off again, so the file stays open for the checks.
+        store.previewReview(drafts: drafts, threads: threads, viewed: ["src/long.ts": .dismissed], viewer: "dev")
+        reviewSelfCheck(NavigationStack { PRTabView(model: writeModel, workspace: ws, store: store) }, out: CommandLine.arguments.dropFirst().first)
+    }
     if ProcessInfo.processInfo.environment["QUACK_SELECT_CHECK"] != nil {
         let longPatch = "@@ -0,0 +1,60 @@\\n" + (1...60).map { "+const line\($0) = \($0);" }.joined(separator: "\\n") + "\\n"
         let diff: PrDiffMessage = decode(#"{"requestId":"d","pr":{"owner":"acme","repo":"web","number":4127},"baseSha":"b","headSha":"\#(sha)","files":[{"path":"src/long.ts","status":"added","additions":60,"deletions":0,"binary":false,"truncated":false,"patch":"\#(longPatch)"}]}"#)
@@ -272,6 +519,9 @@ MainActor.assumeIsolated {
         let labels = #"{"files":\#(filesJSON),"layout":"unified","headSha":"\#(sha)","labels":{"src/long.ts":{"path":"src/long.ts","risk":"high","reason":"New module","rank":0,"source":"agent"}}}"#
         selectionSelfCheck(NavigationStack { PRTabView(model: model, workspace: ws, store: store) }, labels: labels)
     }
+    writeBoards(inbox: inbox, prKey: prKey, prReview: prReview, prLabels: prLabels, prDiff: prDiff, ws: ws)
+    assignBoards()
+    approvalBoards()
     let cachedStore = PRStore(preview: prKey, model: model, review: nil, labels: prLabels, diff: prDiff)
     snapshot("pr-sidebar-cached", size: CGSize(width: 320, height: 760)) { NavigationStack { RankedFilesSidebar(store: cachedStore, model: model) } }
     snapshot("pr-sidebar", size: CGSize(width: 320, height: 640)) { NavigationStack { RankedFilesSidebar(store: prStore, model: model) } }

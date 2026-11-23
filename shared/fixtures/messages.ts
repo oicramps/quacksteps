@@ -18,7 +18,7 @@ const review = {
 } as const;
 
 export const appMessages: AppMessage[] = [
-  { type: 'hello', requestId: 'h1', client: 'mac-app', clientVersion: '0.2.6', protocol: 2 },
+  { type: 'hello', requestId: 'h1', client: 'mac-app', clientVersion: '0.2.6', protocol: 3 },
   { type: 'subscribe', requestId: 's1', topic: 'inbox' },
   { type: 'subscribe', requestId: 's2', topic: 'agents' },
   { type: 'subscribe', requestId: 's3', topic: { pr } },
@@ -44,7 +44,7 @@ export const appMessages: AppMessage[] = [
 ];
 
 export const serverMessages: ServerMessage[] = [
-  { type: 'hello', requestId: 'h1', version: '0.2.6', protocol: 2, viewer: 'dev', capabilities: { workspace: true, inbox: true, labels: true, review: true, agents: ['cursor', 'claude-code'] } },
+  { type: 'hello', requestId: 'h1', version: '0.2.6', protocol: 3, viewer: 'dev', capabilities: { workspace: true, inbox: true, labels: true, review: true, agents: ['cursor', 'claude-code'], write: true } },
   { type: 'ack', requestId: 'x1' },
   {
     type: 'agents',

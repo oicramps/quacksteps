@@ -80,7 +80,45 @@ public final class PRStore {
     public var askAgent: AgentId?
     public var askModel: String = ""
 
-    @ObservationIgnored private unowned let model: AppModel
+    // Writing reviews (v3); see PRStore+Review.swift.
+    /// Pending comments and replies, on this Mac until submitted.
+    public internal(set) var drafts: [DraftComment] = []
+    public internal(set) var reviewSummary = ""
+    public internal(set) var reviewEvent: ReviewEvent?
+    /// GitHub's review threads on this PR.
+    public internal(set) var ghThreads: [ReviewThread] = []
+    /// GitHub's viewed state per path.
+    public internal(set) var viewed: [String: ViewedState] = [:]
+    /// My last submitted review: what "Since my last review" compares with.
+    public internal(set) var lastReview: LastReview?
+    public internal(set) var reviewViewer: String?
+    /// The last review write that failed (shown as a banner until dismissed or retried).
+    public var writeError: ServerError?
+    /// "Since my last review" is on: the diff shows only what changed after `lastReview.commit`.
+    public internal(set) var sinceLastReview = false
+    /// "Turn into comment": the chat turn being drafted from, while the agent works.
+    public internal(set) var draftingTurn: String?
+    /// Turns already turned into a comment: turn id -> "lines 79–81".
+    public internal(set) var placedDrafts: [String: String] = [:]
+    /// A drafted comment for the diff to open in its editor. The diff opens each request once (by id).
+    public internal(set) var editorRequest: EditorRequest?
+    /// The gap check in the submit sheet.
+    public internal(set) var gapCheck: GapCheckState = .idle
+    /// Gap findings kept in the review: finding id -> draft id (for Undo).
+    public internal(set) var gapKept: [String: String] = [:]
+    public internal(set) var gapDismissed: Set<String> = []
+    @ObservationIgnored var gapTask: Task<Void, Never>?
+    /// Submitting the review: the sheet, then the toast or the failure panel.
+    public internal(set) var submitState: SubmitState = .idle
+    /// The Submit review sheet is open.
+    public var showSubmitSheet = false
+    /// I'm an assignee on GitHub (from the threads reply).
+    public internal(set) var assignedToMe: Bool?
+    /// Pending comments whose lines changed in a newer commit: draft id -> what changed.
+    public internal(set) var outdated: [String: OutdatedDraft] = [:]
+    @ObservationIgnored var reconciling = false
+
+    @ObservationIgnored unowned let model: AppModel
     @ObservationIgnored private var subscription: Task<Void, Never>?
     @ObservationIgnored private var asking: Task<Void, Never>?
 
@@ -107,6 +145,7 @@ public final class PRStore {
         guard subscription == nil else { return }
         subscription = Task { [weak self] in await self?.follow() }
         Task { await loadThreads() }
+        Task { await loadReviewWrite() }
     }
 
     private func follow() async {
@@ -136,11 +175,13 @@ public final class PRStore {
         loadingDiff = true
         defer { loadingDiff = false }
         let head = review.flatMap { $0.headSha.isEmpty ? nil : $0.headSha }
+        let since = sinceLastReview ? lastReview?.commit : nil
         do {
-            if case let .prDiff(m) = try await model.server.request(.prDiff(pr, headSha: head), timeout: .seconds(120)) {
+            if case let .prDiff(m) = try await model.server.request(.prDiff(pr, headSha: head, since: since), timeout: .seconds(120)) {
                 diff = m
                 diffError = nil
                 if selectedFile == nil { selectedFile = rankedFiles.first?.path }
+                Task { await reconcileDrafts() }
             }
         } catch let error as RequestError {
             diffError = ServerError(code: error.code, message: error.message, fixSteps: error.fixSteps)

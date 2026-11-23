@@ -6,7 +6,7 @@ import type { InboxEvent, InboxItem } from '@quacksteps/shared';
 import { openDb } from '../src/db.ts';
 import type { RunResult } from '../src/exec.ts';
 import { type GhRunner, QUERIES } from '../src/gh.ts';
-import { InboxService, type InboxSnapshot, type RawPr, approvedByOthers, authorState, computeStacks, diffInbox, reviewerInfo } from '../src/inbox.ts';
+import { InboxService, type InboxSnapshot, type RawPr, approvalsOf, approvedByOthers, authorState, computeStacks, diffInbox, reviewerInfo } from '../src/inbox.ts';
 
 const VIEWER = 'me-dev';
 let seq = 0;
@@ -85,10 +85,30 @@ test('failing or erroring CI blocks the PR', () => {
 });
 
 test('ready to merge needs a clean merge state and approval (or no review requirement)', () => {
-  assert.equal(authorState(pr({ reviewDecision: 'APPROVED' }), clean).state, 'ready_to_merge');
-  assert.equal(authorState(pr({ reviewDecision: null }), { mergeable: 'MERGEABLE', mergeStateStatus: 'HAS_HOOKS' }).state, 'ready_to_merge');
+  assert.equal(authorState(pr({ reviewDecision: 'APPROVED', latestReviews: { nodes: [{ state: 'APPROVED', submittedAt: null, author: { __typename: 'User', login: 'noor' } }] } }), clean).state, 'ready_to_merge');
+  assert.equal(authorState(pr({ reviewDecision: null, latestReviews: { nodes: [{ state: 'APPROVED', submittedAt: null, author: { __typename: 'User', login: 'noor' } }] } }), { mergeable: 'MERGEABLE', mergeStateStatus: 'HAS_HOOKS' }).state, 'ready_to_merge');
   assert.equal(authorState(pr({ reviewDecision: 'REVIEW_REQUIRED' }), clean).state, 'waiting_on_reviewers');
   assert.equal(authorState(pr({ reviewDecision: 'APPROVED' }), { mergeable: 'MERGEABLE', mergeStateStatus: 'BLOCKED' }).state, 'waiting_on_reviewers');
+});
+
+test('review bots never count as the approval a PR needs', () => {
+  const bot = { __typename: 'Bot', login: 'coderabbitai' };
+  const botOnly = pr({ reviewDecision: 'APPROVED', latestReviews: { nodes: [{ state: 'APPROVED', submittedAt: null, author: bot }] } });
+  assert.equal(authorState(botOnly, clean).state, 'waiting_on_reviewers', 'a bot approval alone is not ready');
+  assert.deepEqual(approvalsOf(botOnly), [{ login: 'coderabbitai', bot: true }]);
+  // A known bot even without the Bot type, and "[bot]" logins, lose the suffix.
+  const named = pr({ latestReviews: { nodes: [
+    { state: 'APPROVED', submittedAt: null, author: { login: 'coderabbitai' } },
+    { state: 'APPROVED', submittedAt: null, author: { __typename: 'Bot', login: 'renovate[bot]' } },
+    { state: 'APPROVED', submittedAt: null, author: { __typename: 'User', login: 'noor' } },
+  ] } });
+  assert.deepEqual(approvalsOf(named), [{ login: 'coderabbitai', bot: true }, { login: 'renovate', bot: true }, { login: 'noor', bot: false }]);
+  assert.deepEqual(approvedByOthers(named, 'me'), ['noor'], 'a review request approved only by bots still waits on me');
+  // A bot's change request alone isn't my turn; its unresolved threads are.
+  const botChanges = pr({ reviewDecision: 'CHANGES_REQUESTED', latestReviews: { nodes: [{ state: 'CHANGES_REQUESTED', submittedAt: null, author: bot }] } });
+  assert.equal(authorState(botChanges, clean).state, 'waiting_on_reviewers');
+  const withThreads = pr({ ...botChanges, reviewThreads: { totalCount: 2, nodes: [{ isResolved: false }, { isResolved: true }] } });
+  assert.deepEqual(authorState(withThreads, clean).reasons, ['1 unresolved thread']);
 });
 
 test('unknown merge state is never ready and never conflicting', () => {
@@ -258,7 +278,7 @@ function setup(world: Partial<World> = {}, opts: Partial<ConstructorParameters<t
 }
 
 test('a poll stores items, sorted, and the viewer', async () => {
-  const mineReady = pr({ number: 10, author: { login: VIEWER }, reviewDecision: 'APPROVED' });
+  const mineReady = pr({ number: 10, author: { login: VIEWER }, reviewDecision: 'APPROVED', latestReviews: { nodes: [{ state: 'APPROVED', submittedAt: null, author: { __typename: 'User', login: 'noor' } }] } });
   const mineBlocked = pr({ number: 11, author: { login: VIEWER }, ci: 'FAILURE' });
   const draft = pr({ number: 12, author: { login: VIEWER }, isDraft: true });
   const older = pr({ number: 20, reviewRequests: { nodes: [{ requestedReviewer: user(VIEWER) }] }, timelineItems: { nodes: [requested('2026-11-02T00:00:00Z', user(VIEWER))] } });
@@ -319,7 +339,7 @@ test('since keeps its start while the state holds, and moves when the state chan
   await t.inbox.refresh();
   assert.equal(t.inbox.snapshot().items[0].author!.since, '2026-11-15T08:00:00Z', 'unchanged state keeps its start');
 
-  t.w.mine = [{ ...mine, reviewDecision: 'APPROVED' }];
+  t.w.mine = [{ ...mine, reviewDecision: 'APPROVED', latestReviews: { nodes: [{ state: 'APPROVED', submittedAt: null, author: { __typename: 'User', login: 'noor' } }] } }];
   t.advance(3600_000);
   await t.inbox.refresh();
   const moved = t.inbox.snapshot().items[0].author!;
@@ -328,7 +348,7 @@ test('since keeps its start while the state holds, and moves when the state chan
 });
 
 test('when merge state fails, the last known value at the same head is used', async () => {
-  const mine = pr({ number: 50, author: { login: VIEWER }, reviewDecision: 'APPROVED' });
+  const mine = pr({ number: 50, author: { login: VIEWER }, reviewDecision: 'APPROVED', latestReviews: { nodes: [{ state: 'APPROVED', submittedAt: null, author: { __typename: 'User', login: 'noor' } }] } });
   const t = setup({ mine: [mine], merge: { PR_50: clean } });
   await t.inbox.refresh();
   assert.equal(t.inbox.snapshot().items[0].author!.state, 'ready_to_merge');

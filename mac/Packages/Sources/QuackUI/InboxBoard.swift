@@ -14,6 +14,8 @@ enum BoardColumns {
     static let spacing: CGFloat = 12
 
     static let boardInk = Color.dynamic(light: NSColor(hex: 0x1c222e), dark: NSColor(hex: 0x0f1115))
+    /// Review bots (approved, but not counted): a muted violet, apart from the human green.
+    static let botInk = Color.dynamic(light: NSColor(hex: 0x6d4fc2), dark: NSColor(hex: 0xb7a3f0))
 }
 
 /// "CI   SIZE  WAIT  STATUS" over a section, lined up with the row columns.
@@ -45,7 +47,8 @@ struct BoardCells: View {
     var lines: Int
     var since: Date?
     var status: (Date) -> BoardStatus
-    var totalSize: Bool = false
+    /// Set on a stack header: the lines are the stack's total, shown without a size.
+    var stackCount: Int? = nil
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
@@ -53,7 +56,7 @@ struct BoardCells: View {
             let status = status(context.date)
             HStack(spacing: BoardColumns.spacing) {
                 CIGlyph(ci).frame(width: BoardColumns.ci)
-                SizeCell(lines: lines, total: totalSize).frame(width: BoardColumns.size, alignment: .trailing)
+                SizeCell(lines: lines, stackCount: stackCount).frame(width: BoardColumns.size, alignment: .trailing)
                 FlapText(waited.map(BoardFormat.flaps) ?? BoardFormat.noTimer, key: key, dim: waited == nil)
                     .frame(width: BoardColumns.wait, alignment: .leading)
                     .help(waited.map { "Waiting \(WaitFormat.spoken($0))" } ?? "Draft: no timer")
@@ -66,11 +69,34 @@ struct BoardCells: View {
 }
 
 /// "340 lines  M": the line count, then the size letter on light flap tiles. Only L and XL get colour.
+/// A stack header shows its total instead ("949 lines" over "in 2 PRs"), with no size letter: a size
+/// says how big one review is, and each PR in the stack keeps its own.
 struct SizeCell: View {
     var lines: Int
-    var total: Bool = false
+    var stackCount: Int? = nil
 
     var body: some View {
+        if let stackCount { total(stackCount) } else { single }
+    }
+
+    private func total(_ count: Int) -> some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Text(verbatim: "\(lines.formatted()) lines")
+                .font(.system(size: 11))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+            Text(verbatim: "in \(count) PRs")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .help("\(lines.formatted()) changed lines across the \(count) PRs of the stack")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(lines.formatted()) changed lines across \(count) PRs")
+    }
+
+    @ViewBuilder private var single: some View {
         let size = PRSize(lines: lines)
         let (bg, fg): (Color, Color) = switch size {
         case .l: (Tokens.medBg, Tokens.warning)
@@ -94,9 +120,9 @@ struct SizeCell: View {
             }
         }
         .fixedSize()
-        .help("\(size.rawValue): \(lines.formatted()) changed lines\(total ? " in the stack" : "")")
+        .help("\(size.rawValue): \(lines.formatted()) changed lines")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(size.rawValue), \(lines.formatted()) changed lines\(total ? " in total" : "")")
+        .accessibilityLabel("\(size.rawValue), \(lines.formatted()) changed lines")
     }
 }
 
@@ -127,7 +153,8 @@ struct StatusWord: View {
 
 /// Small rounded tag under a row's title: "Stack 1/2", "Reviewing", "2 new commits".
 struct BoardTag: View {
-    enum Kind { case plain, accent, orange, red, green }
+    /// `bot`: a review bot's approval — shown, but never the approval a PR needs.
+    enum Kind { case plain, accent, orange, red, green, bot }
     var text: String
     var kind: Kind = .plain
 
@@ -138,8 +165,12 @@ struct BoardTag: View {
         case .orange: (AnyShapeStyle(Tokens.warning), AnyShapeStyle(Tokens.fill))
         case .red: (AnyShapeStyle(Tokens.danger), AnyShapeStyle(Tokens.highBg))
         case .green: (AnyShapeStyle(Tokens.success), AnyShapeStyle(Tokens.greenBg))
+        case .bot: (AnyShapeStyle(BoardColumns.botInk), AnyShapeStyle(BoardColumns.botInk.opacity(0.13)))
         }
-        Text(verbatim: text)
+        HStack(spacing: 3) {
+            if kind == .bot { Image(systemName: "cpu").font(.system(size: 9, weight: .semibold)) }
+            Text(verbatim: text)
+        }
             .font(.system(size: 10.5, weight: .medium))
             .foregroundStyle(fg)
             .padding(.horizontal, 6)
@@ -264,6 +295,7 @@ struct StackHeaderRow: View {
                         }
                     }
                     .accessibilityHidden(true)
+                    .help("Green: approved by a person · Violet: approved by a bot only · Grey: not yet")
                     Text(progress).fixedSize()
                 }
                 .font(.system(size: 11))
@@ -271,7 +303,7 @@ struct StackHeaderRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             BoardCells(key: group.id, ci: group.worstCI, lines: group.totalLines, since: group.oldestWait,
-                       status: { group.mostUrgentStatus(now: $0) }, totalSize: true)
+                       status: { group.mostUrgentStatus(now: $0) }, stackCount: group.items.count)
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
@@ -295,13 +327,17 @@ struct StackHeaderRow: View {
             let done = group.items.filter { $0.reviewer?.isRequested == false }.count
             return done > 0 ? "\(done) of \(n) reviewed" : "\(n) to review"
         }
-        let approved = group.items.filter { $0.author?.state == .readyToMerge }.count
-        return "\(approved) of \(n) approved"
+        // Approved = a human approved. Bot-only approvals are counted apart.
+        let approved = group.items.filter { !$0.humanApprovals.isEmpty }.count
+        let botOnly = group.items.filter { $0.humanApprovals.isEmpty && !$0.botApprovals.isEmpty }.count
+        return "\(approved) of \(n) approved" + (botOnly > 0 ? " · \(botOnly) by a bot only" : "")
     }
 
-    /// Green: done (approved, or I already reviewed it). Blue: I'm reviewing it. Grey: not yet.
+    /// Green: a person approved (or, for my review requests, I already reviewed it). Violet: only a bot
+    /// approved. Blue: I'm reviewing it. Grey: not yet.
     private func pipColor(_ item: InboxItem) -> Color {
-        if item.author?.state == .readyToMerge || item.reviewer?.isRequested == false { return Tokens.success }
+        if !item.humanApprovals.isEmpty || item.reviewer?.isRequested == false { return Tokens.success }
+        if !item.botApprovals.isEmpty { return BoardColumns.botInk }
         if item.review != nil { return .accentColor }
         return Tokens.fill2
     }
