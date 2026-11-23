@@ -1,6 +1,7 @@
 // Chrome Native Messaging framing: 32-bit little-endian byte length followed by UTF-8 JSON.
 
-const MAX_INCOMING = 64 * 1024 * 1024;
+/** Chrome's own cap on extension-to-host messages is far lower; this only bounds memory. */
+export const MAX_INCOMING = 64 * 1024 * 1024;
 
 /** Encodes a payload into a length-prefixed native messaging frame. */
 export function encodeMessage(message: unknown): Buffer {
@@ -14,13 +15,19 @@ export function encodeMessage(message: unknown): Buffer {
 export class MessageDecoder {
   private buffer = Buffer.alloc(0);
 
+  private readonly maxIncoming: number;
+
+  constructor(maxIncoming = MAX_INCOMING) {
+    this.maxIncoming = maxIncoming;
+  }
+
   /** Appends a chunk and returns all complete decoded JSON messages. */
   push(chunk: Buffer): unknown[] {
     this.buffer = Buffer.concat([this.buffer, chunk]);
     const messages: unknown[] = [];
     while (this.buffer.length >= 4) {
       const length = this.buffer.readUInt32LE(0);
-      if (length > MAX_INCOMING) throw new Error(`Incoming message too large: ${length} bytes`);
+      if (length > this.maxIncoming) throw new Error(`Incoming message too large: ${length} bytes`);
       if (this.buffer.length < 4 + length) break;
       const body = this.buffer.subarray(4, 4 + length).toString('utf8');
       this.buffer = this.buffer.subarray(4 + length);

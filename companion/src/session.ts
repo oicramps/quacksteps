@@ -1,15 +1,15 @@
-import type { AgentEvent, AskRequest, AgentStatus, CompanionMessage, ErrorCode, FixStep, ProgressStep } from '@quacksteps/shared';
+import type { AgentEvent, AskRequest, AgentStatus, CompanionMessage, ErrorCode, FixStep, PrKey, ProgressStep, ReviewState } from '@quacksteps/shared';
 import { AGENT_TIMEOUT_MS } from '@quacksteps/shared';
 import { adapters } from './adapters/index.ts';
 import { collectCi } from './checks.ts';
 import { loadConfig } from './config.ts';
-import { log } from './log.ts';
+import { log, logPilot } from './log.ts';
 import { buildCiPrompt, buildFollowUp, buildPrompt } from './prompt.ts';
 import { type PrContext, prDiff, resolvePr } from './pr.ts';
-import { contractHome } from './paths.ts';
-import { findCloneWithDiagnostics } from './repo.ts';
+import { cloneNotFound, findCloneWithDiagnostics } from './repo.ts';
 import { resolveSelections } from './selection.ts';
-import { acquireLock, changedFiles, discardWorktreeChanges, prepareWorktree, worktreePath } from './worktree.ts';
+import type { Release } from './rwlock.ts';
+import { changedFiles, endRead, readWorktreeAt, worktreePath } from './worktree.ts';
 
 export type Send = (message: CompanionMessage) => void;
 export type GetStatus = (agent: AskRequest['agent']) => Promise<AgentStatus>;
@@ -32,17 +32,31 @@ class AskError extends Error {
  * prepares an isolated detached worktree, constructs the prompt, and streams
  * agent events back to the extension.
  */
-export async function handleAsk(req: AskRequest, send: Send, signal: AbortSignal, getStatus: GetStatus): Promise<void> {
-  const { requestId, pr } = req;
+export async function handleAsk(
+  req: AskRequest,
+  send: Send,
+  signal: AbortSignal,
+  getStatus: GetStatus,
+  /** The server's review lookup. A PR being reviewed is read at the review's commit and never moved. */
+  reviewOf?: (pr: PrKey) => ReviewState | undefined,
+): Promise<void> {
+  const { requestId } = req;
+  const review = reviewOf?.(req.pr);
+  const reviewing = review && (review.phase === 'ready' || review.phase === 'stale') ? review : undefined;
+  // Answers on a reviewed PR are about the commit the reviewer is looking at, whatever the app sent.
+  const pr = reviewing ? { ...req.pr, headSha: reviewing.headSha } : req.pr;
   const started = Date.now();
+  let firstEventMs: number | undefined;
+  const pilotKey = `${req.pr.owner}/${req.pr.repo}#${req.pr.number}`.toLowerCase();
   const emit = (event: AgentEvent) => send({ type: 'event', requestId, event });
   const progress = (step: ProgressStep, detail?: string) => {
     log(requestId, step, `+${Date.now() - started}ms`);
     send({ type: 'progress', requestId, step, detail });
   };
 
-  let release: (() => void) | null = null;
+  let release: Release | null = null;
   let worktree: string | null = null;
+  let baseline: ReadonlySet<string> = new Set();
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), AGENT_TIMEOUT_MS);
   const agentSignal = AbortSignal.any([signal, timeout.signal]);
@@ -55,31 +69,8 @@ export async function handleAsk(req: AskRequest, send: Send, signal: AbortSignal
     const statusPromise = getStatus(req.agent);
     const { clone, blockedRoots, overrideIssue } = await findCloneWithDiagnostics(config, pr.owner, pr.repo);
     if (!clone) {
-      const blocked = blockedRoots.map(contractHome);
-      const message = overrideIssue
-        ? overrideIssue
-        : blocked.length
-          ? `Could not find ${pr.owner}/${pr.repo}. Your browser does not have permission to read ${blocked.join(', ')}.`
-          : `Could not find a local clone of ${pr.owner}/${pr.repo} in your scanned folders.`;
-      const steps: FixStep[] = [];
-      if (blocked.length) {
-        steps.push({
-          text: `Allow your browser to read ${blocked.join(', ')} in System Settings → Privacy & Security → Files and Folders, restart the browser, then click Retry.`,
-        });
-      }
-      const cloneRoot =
-        config.scanRoots.map(contractHome).find((r) => !r.startsWith('~/Documents') && !blocked.includes(r)) ?? '~/Projects';
-      steps.push(
-        {
-          text: 'Already cloned elsewhere? Run this with your clone’s path (or set "repoPaths" in ~/.quack/config.json), then click Retry:',
-          command: `~/.quack/bin/quack-companion link /path/to/${pr.repo} ${pr.owner}/${pr.repo}`,
-        },
-        {
-          text: `Not cloned yet? Clone it into ${cloneRoot} (or any folder in "scanRoots" in ~/.quack/config.json):`,
-          command: `git clone git@github.com:${pr.owner}/${pr.repo}.git ${cloneRoot}/${pr.repo}`,
-        },
-      );
-      throw new AskError('repo_not_found', message, steps);
+      const { message, fixSteps } = cloneNotFound(config, pr, blockedRoots, overrideIssue, 'browser');
+      throw new AskError('repo_not_found', message, fixSteps);
     }
 
     const status = await statusPromise;
@@ -92,6 +83,8 @@ export async function handleAsk(req: AskRequest, send: Send, signal: AbortSignal
     // inspect the same commit without re-fetching from origin.
     const cacheKey = `${clone}#${pr.number}`;
     let ctx = req.sessionId ? prContexts.get(cacheKey) : undefined;
+    // After an Update the review moved to a new head; a cached context for the old one is stale.
+    if (ctx && reviewing && ctx.headSha !== reviewing.headSha) ctx = undefined;
     if (!ctx) {
       try {
         ctx = await resolvePr(clone, pr);
@@ -105,16 +98,17 @@ export async function handleAsk(req: AskRequest, send: Send, signal: AbortSignal
     if (signal.aborted) throw new AskError('cancelled', 'Stopped.');
 
     progress('preparing_worktree', ctx.headSha);
-    const dir = worktreePath(config, pr.owner, pr.repo, pr.number);
+    const dir = reviewing?.worktreePath ?? worktreePath(config, pr.owner, pr.repo, pr.number);
     try {
-      release = await acquireLock(dir, signal);
-    } catch {
-      throw new AskError('cancelled', 'Stopped.');
+      // A reader: several turns (and label runs) share the tree. Unreviewed PRs are checked out lazily first.
+      release = await readWorktreeAt(clone, dir, ctx.headSha, signal, { prepare: !reviewing });
+    } catch (err) {
+      if (signal.aborted) throw new AskError('cancelled', 'Stopped.');
+      throw err;
     }
     worktree = dir;
-    await prepareWorktree(clone, dir, ctx.headSha);
-    const baseline = new Set(await changedFiles(dir));
-    log(requestId, 'worktree ready', `+${Date.now() - started}ms`);
+    baseline = new Set(await changedFiles(dir, { ignored: true }));
+    log(requestId, reviewing ? 'reading review worktree' : 'worktree ready', `+${Date.now() - started}ms`);
 
     const selections = await resolveSelections(clone, ctx.baseSha, ctx.headSha, req.selections);
 
@@ -173,7 +167,8 @@ export async function handleAsk(req: AskRequest, send: Send, signal: AbortSignal
     for await (const ev of adapter.ask({ cwd: dir, prompt, model: req.model, sessionId: req.sessionId, signal: agentSignal })) {
       if (firstEvent) {
         firstEvent = false;
-        log(requestId, 'first agent event', `+${Date.now() - started}ms`);
+        firstEventMs = Date.now() - started;
+        log(requestId, 'first agent event', `+${firstEventMs}ms`);
         progress('thinking');
       }
       switch (ev.type) {
@@ -197,12 +192,15 @@ export async function handleAsk(req: AskRequest, send: Send, signal: AbortSignal
     if (timeout.signal.aborted) throw new AskError('timeout', `${adapter.label} timed out after ${AGENT_TIMEOUT_MS / 60_000} minutes.`);
     if (signal.aborted) throw new AskError('cancelled', 'Stopped.');
 
-    const changed = (await changedFiles(dir)).filter((line) => !baseline.has(line));
+    // Ending the read flags a dirty tree and queues its cleanup behind any other reader.
+    const changed = await endRead(dir, release, baseline);
+    release = null;
     if (changed.length) {
       log(requestId, `agent left ${changed.length} changed files in the worktree`);
       emit({ type: 'tool', summary: `Warning: the agent changed ${changed.length} file(s) in the worktree; they will be discarded.` });
     }
     log(requestId, 'done', `+${Date.now() - started}ms`);
+    logPilot('ask', { pr: pilotKey, outcome: 'done', ms: Date.now() - started, first_event_ms: firstEventMs, agent: req.agent, model, reviewing: !!reviewing, follow_up: !!req.sessionId });
     emit({ type: 'done', sessionId, headSha: ctx.headSha, model });
   } catch (err) {
     const e =
@@ -214,10 +212,11 @@ export async function handleAsk(req: AskRequest, send: Send, signal: AbortSignal
             ? new AskError('cancelled', 'Stopped.')
             : new AskError('agent_failed', (err as Error).message);
     log(requestId, 'error', e.code, e.message);
+    logPilot('ask', { pr: pilotKey, outcome: e.code, ms: Date.now() - started, first_event_ms: firstEventMs, agent: req.agent, reviewing: !!reviewing });
     emit({ type: 'error', code: e.code, message: e.message, fixSteps: e.fixSteps });
   } finally {
     clearTimeout(timer);
-    if (worktree) await discardWorktreeChanges(worktree).catch((err) => log(requestId, 'worktree cleanup failed', String(err)));
-    release?.();
+    // On an error or cancel the read is still held: end it the same way.
+    if (worktree && release) await endRead(worktree, release, baseline).catch((err) => log(requestId, 'worktree cleanup failed', String(err)));
   }
 }

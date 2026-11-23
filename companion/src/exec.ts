@@ -4,8 +4,15 @@ import path from 'node:path';
 import { EXTRA_BIN_DIRS } from './paths.ts';
 
 /** Builds a `PATH` string combining the active Node binary directory, `process.env.PATH`, and standard user/system bin directories. */
+let configuredPath: string[] = [];
+
+/** The config's `extraPath`, searched first. The server sets it at start and after Settings change it. */
+export function setExtraPath(dirs: string[]): void {
+  configuredPath = [...dirs];
+}
+
 export function searchPath(): string {
-  const dirs = [path.dirname(process.execPath), ...(process.env.PATH ?? '').split(':'), ...EXTRA_BIN_DIRS];
+  const dirs = [...configuredPath, path.dirname(process.execPath), ...(process.env.PATH ?? '').split(':'), ...EXTRA_BIN_DIRS];
   return [...new Set(dirs.filter(Boolean))].join(':');
 }
 
@@ -91,7 +98,7 @@ export function runGit(args: string[], opts: { cwd?: string; timeoutMs?: number;
 export function run(
   file: string,
   args: string[],
-  opts: { cwd?: string; timeoutMs?: number; maxBuffer?: number } = {},
+  opts: { cwd?: string; timeoutMs?: number; maxBuffer?: number; env?: Record<string, string> } = {},
 ): Promise<RunResult> {
   return new Promise((resolve) => {
     execFile(
@@ -99,7 +106,7 @@ export function run(
       args,
       {
         cwd: opts.cwd,
-        env: childEnv(),
+        env: { ...childEnv(), ...opts.env },
         timeout: opts.timeoutMs ?? 60_000,
         maxBuffer: opts.maxBuffer ?? 32 * 1024 * 1024,
         encoding: 'utf8',

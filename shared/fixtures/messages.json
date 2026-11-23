@@ -1,0 +1,811 @@
+{
+  "appMessages": [
+    {
+      "type": "hello",
+      "requestId": "h1",
+      "client": "mac-app",
+      "clientVersion": "0.2.6",
+      "protocol": 2
+    },
+    {
+      "type": "subscribe",
+      "requestId": "s1",
+      "topic": "inbox"
+    },
+    {
+      "type": "subscribe",
+      "requestId": "s2",
+      "topic": "agents"
+    },
+    {
+      "type": "subscribe",
+      "requestId": "s3",
+      "topic": {
+        "pr": {
+          "owner": "acme",
+          "repo": "web",
+          "number": 4127
+        }
+      }
+    },
+    {
+      "type": "unsubscribe",
+      "requestId": "s3"
+    },
+    {
+      "type": "inbox",
+      "requestId": "i1",
+      "refresh": true
+    },
+    {
+      "type": "start_review",
+      "requestId": "r1",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "agent": "cursor",
+      "model": ""
+    },
+    {
+      "type": "stop_review",
+      "requestId": "r2",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "removeWorktree": true
+    },
+    {
+      "type": "update_review",
+      "requestId": "r3",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      }
+    },
+    {
+      "type": "risk_labels",
+      "requestId": "l1",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "rerun": true
+    },
+    {
+      "type": "pr_diff",
+      "requestId": "d1",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a"
+    },
+    {
+      "type": "threads",
+      "requestId": "t1",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      }
+    },
+    {
+      "type": "ask",
+      "requestId": "a1",
+      "agent": "cursor",
+      "model": "",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127,
+        "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a"
+      },
+      "selections": [
+        {
+          "path": "src/map.ts",
+          "side": "new",
+          "startLine": 47,
+          "endLine": 51
+        }
+      ],
+      "question": "Why cluster here?",
+      "sessionId": null
+    },
+    {
+      "type": "ask",
+      "requestId": "a2",
+      "agent": "claude-code",
+      "model": "",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127,
+        "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a"
+      },
+      "selections": [],
+      "question": "And the tests?",
+      "sessionId": null,
+      "history": [
+        {
+          "question": "Why cluster here?",
+          "answer": "Because pins overlap."
+        }
+      ]
+    },
+    {
+      "type": "cancel",
+      "requestId": "a1"
+    },
+    {
+      "type": "close_session",
+      "requestId": "cs1",
+      "agent": "cursor",
+      "sessionId": "s-1"
+    },
+    {
+      "type": "shutdown",
+      "requestId": "x1"
+    },
+    {
+      "type": "setup_checks",
+      "requestId": "c1"
+    },
+    {
+      "type": "settings",
+      "requestId": "g1"
+    },
+    {
+      "type": "save_settings",
+      "requestId": "g2",
+      "patch": {
+        "retentionDays": 14,
+        "chatAgent": "cursor",
+        "chatModel": "auto",
+        "labelsAgent": null,
+        "labelsModel": "fast",
+        "extraPath": [
+          "~/bin"
+        ],
+        "pollActiveSeconds": 60,
+        "pollIdleSeconds": 300,
+        "maxWorktrees": 20
+      }
+    },
+    {
+      "type": "prune_worktrees",
+      "requestId": "g3"
+    },
+    {
+      "type": "diagnostics",
+      "requestId": "g4"
+    },
+    {
+      "type": "workspace_save",
+      "requestId": "w1",
+      "addPath": "/Users/dev/code"
+    }
+  ],
+  "serverMessages": [
+    {
+      "type": "hello",
+      "requestId": "h1",
+      "version": "0.2.6",
+      "protocol": 2,
+      "viewer": "dev",
+      "capabilities": {
+        "workspace": true,
+        "inbox": true,
+        "labels": true,
+        "review": true,
+        "agents": [
+          "cursor",
+          "claude-code"
+        ]
+      }
+    },
+    {
+      "type": "ack",
+      "requestId": "x1"
+    },
+    {
+      "type": "agents",
+      "requestId": "s2",
+      "agents": [
+        {
+          "id": "cursor",
+          "label": "Cursor",
+          "state": "ready",
+          "version": "2026.11.01",
+          "path": "/Users/dev/.local/bin/cursor-agent",
+          "models": [
+            "",
+            "auto"
+          ],
+          "fixSteps": []
+        },
+        {
+          "id": "claude-code",
+          "label": "Claude Code",
+          "state": "not_installed",
+          "models": [],
+          "fixSteps": [
+            {
+              "text": "Install Claude Code",
+              "command": "npm i -g @anthropic-ai/claude-code"
+            }
+          ]
+        }
+      ],
+      "pending": []
+    },
+    {
+      "type": "inbox",
+      "requestId": "s1",
+      "fetchedAt": "2026-11-18T10:41:00.000Z",
+      "items": [
+        {
+          "pr": {
+            "owner": "acme",
+            "repo": "web",
+            "number": 4127
+          },
+          "title": "Trip map: cluster pins at low zoom",
+          "url": "https://github.com/acme/web/pull/4127",
+          "authorLogin": "noor",
+          "isDraft": false,
+          "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+          "baseRef": "main",
+          "updatedAt": "2026-11-18T08:00:00Z",
+          "additions": 188,
+          "deletions": 12,
+          "role": "reviewer",
+          "reviewer": {
+            "requestedAt": "2026-11-16T05:00:00Z",
+            "via": "team",
+            "team": "web",
+            "approvedBy": [
+              "sven"
+            ]
+          },
+          "ci": "passing",
+          "review": {
+            "startedAt": "2026-11-18T09:00:00.000Z",
+            "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+            "latestHeadSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+            "worktreePath": "/Users/dev/.quack/worktrees/acme/web/pr-4127",
+            "phase": "ready",
+            "labels": "ready"
+          },
+          "ownerType": "org"
+        },
+        {
+          "pr": {
+            "owner": "acme",
+            "repo": "api",
+            "number": 879
+          },
+          "title": "Trip export: stream GPX instead of buffering",
+          "url": "https://github.com/acme/api/pull/879",
+          "authorLogin": "dev",
+          "isDraft": false,
+          "headSha": "9c41f07e1d2c3b4a59687f6e5d4c3b2a19081726",
+          "baseRef": "main",
+          "updatedAt": "2026-11-18T07:00:00Z",
+          "additions": 40,
+          "deletions": 3,
+          "role": "author",
+          "author": {
+            "state": "waiting_on_me",
+            "since": "2026-11-18T07:30:00Z",
+            "reasons": [
+              "Changes requested by sven",
+              "2 unresolved threads"
+            ]
+          },
+          "ci": "failing"
+        },
+        {
+          "pr": {
+            "owner": "acme",
+            "repo": "web",
+            "number": 4100
+          },
+          "title": "Draft: new feed",
+          "url": "https://github.com/acme/web/pull/4100",
+          "authorLogin": "dev",
+          "isDraft": true,
+          "headSha": "9c41f07e1d2c3b4a59687f6e5d4c3b2a19081726",
+          "baseRef": "main",
+          "updatedAt": "2026-11-17T07:00:00Z",
+          "additions": 1,
+          "deletions": 0,
+          "role": "author",
+          "author": {
+            "state": null,
+            "since": "2026-11-17T07:00:00Z",
+            "reasons": []
+          },
+          "ci": "none"
+        },
+        {
+          "pr": {
+            "owner": "acme",
+            "repo": "web",
+            "number": 4090
+          },
+          "title": "Already reviewed, still reviewing here",
+          "url": "https://github.com/acme/web/pull/4090",
+          "authorLogin": "sven",
+          "isDraft": false,
+          "headSha": "9c41f07e1d2c3b4a59687f6e5d4c3b2a19081726",
+          "baseRef": "main",
+          "updatedAt": "2026-11-17T07:00:00Z",
+          "additions": 5,
+          "deletions": 5,
+          "role": "reviewer",
+          "reviewer": {
+            "requestedAt": "2026-11-10T07:00:00Z",
+            "via": "user",
+            "requested": false
+          },
+          "ci": "pending",
+          "stack": {
+            "position": 2,
+            "size": 2,
+            "parent": {
+              "number": 4127,
+              "title": "Trip map: cluster pins at low zoom"
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "kind": "review_requested",
+          "pr": {
+            "owner": "acme",
+            "repo": "web",
+            "number": 4127
+          }
+        },
+        {
+          "kind": "state_changed",
+          "pr": {
+            "owner": "acme",
+            "repo": "api",
+            "number": 879
+          },
+          "from": "waiting_on_reviewers",
+          "to": "waiting_on_me"
+        },
+        {
+          "kind": "ci_failed",
+          "pr": {
+            "owner": "acme",
+            "repo": "web",
+            "number": 4127
+          },
+          "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a"
+        },
+        {
+          "kind": "new_commits",
+          "pr": {
+            "owner": "acme",
+            "repo": "web",
+            "number": 4127
+          },
+          "headSha": "9c41f07e1d2c3b4a59687f6e5d4c3b2a19081726"
+        }
+      ],
+      "more": {
+        "reviewer": 0,
+        "author": 3
+      },
+      "error": {
+        "code": "rate_limited",
+        "message": "GitHub asked us to slow down.",
+        "fixSteps": []
+      }
+    },
+    {
+      "type": "review",
+      "requestId": "s3",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "review": {
+        "startedAt": "2026-11-18T09:00:00.000Z",
+        "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+        "latestHeadSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+        "worktreePath": "/Users/dev/.quack/worktrees/acme/web/pr-4127",
+        "phase": "preparing",
+        "labels": "none",
+        "step": "checking_out"
+      }
+    },
+    {
+      "type": "review",
+      "requestId": "r2",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "review": null
+    },
+    {
+      "type": "review",
+      "requestId": "s3",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "review": {
+        "startedAt": "2026-11-18T09:00:00.000Z",
+        "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+        "latestHeadSha": "9c41f07e1d2c3b4a59687f6e5d4c3b2a19081726",
+        "worktreePath": "/Users/dev/.quack/worktrees/acme/web/pr-4127",
+        "phase": "stale",
+        "labels": "ready",
+        "newCommits": 3
+      }
+    },
+    {
+      "type": "review",
+      "requestId": "s3",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "review": {
+        "startedAt": "2026-11-18T09:00:00.000Z",
+        "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+        "latestHeadSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+        "worktreePath": "/Users/dev/.quack/worktrees/acme/web/pr-4127",
+        "phase": "ready",
+        "labels": "ready",
+        "closed": {
+          "state": "merged",
+          "at": "2026-11-18T10:30:00Z",
+          "by": "noor"
+        }
+      }
+    },
+    {
+      "type": "review",
+      "requestId": "r3",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "review": {
+        "startedAt": "2026-11-18T09:00:00.000Z",
+        "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+        "latestHeadSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+        "worktreePath": "/Users/dev/.quack/worktrees/acme/web/pr-4127",
+        "phase": "failed",
+        "labels": "ready",
+        "error": "No local clone of acme/web",
+        "fixSteps": [
+          {
+            "text": "Clone it",
+            "command": "git clone https://github.com/acme/web.git"
+          }
+        ]
+      }
+    },
+    {
+      "type": "risk_labels",
+      "requestId": "s3",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+      "status": "ready",
+      "agent": "cursor",
+      "model": "auto",
+      "generatedAt": "2026-11-18T09:01:00.000Z",
+      "files": [
+        {
+          "path": "src/map/clusterPins.ts",
+          "risk": "high",
+          "reason": "Clustering now runs on every pan",
+          "rank": 0,
+          "source": "agent"
+        },
+        {
+          "path": "yarn.lock",
+          "risk": "low",
+          "reason": "Lockfile",
+          "rank": 1,
+          "source": "rule"
+        },
+        {
+          "path": "big.json",
+          "risk": "unlabeled",
+          "reason": "Too big to label. Review by hand",
+          "rank": 2,
+          "source": "rule"
+        }
+      ]
+    },
+    {
+      "type": "risk_labels",
+      "requestId": "l1",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "headSha": "9c41f07e1d2c3b4a59687f6e5d4c3b2a19081726",
+      "status": "running",
+      "agent": "cursor",
+      "model": "",
+      "files": [],
+      "previousHeadSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+      "queued": false,
+      "progress": {
+        "startedAt": "2026-11-18T09:00:00.000Z",
+        "agentFiles": 12,
+        "activity": [
+          "Read File src/map.ts"
+        ]
+      }
+    },
+    {
+      "type": "pr_diff",
+      "requestId": "d1",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "baseSha": "9c41f07e1d2c3b4a59687f6e5d4c3b2a19081726",
+      "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+      "files": [
+        {
+          "path": "src/map/clusterPins.ts",
+          "status": "modified",
+          "additions": 1,
+          "deletions": 1,
+          "binary": false,
+          "patch": "@@ -1 +1 @@\n-a\n+b\n",
+          "truncated": false
+        },
+        {
+          "path": "src/new name.ts",
+          "oldPath": "src/old name.ts",
+          "status": "renamed",
+          "additions": 0,
+          "deletions": 0,
+          "binary": false,
+          "truncated": false
+        },
+        {
+          "path": "logo.png",
+          "status": "added",
+          "additions": 0,
+          "deletions": 0,
+          "binary": true,
+          "truncated": false
+        }
+      ]
+    },
+    {
+      "type": "threads",
+      "requestId": "t1",
+      "pr": {
+        "owner": "acme",
+        "repo": "web",
+        "number": 4127
+      },
+      "turns": [
+        {
+          "question": "Why cluster here?",
+          "answer": "Because **pins** overlap.",
+          "agent": "cursor",
+          "model": "auto",
+          "sessionId": "s-1",
+          "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+          "selections": [
+            {
+              "path": "src/map.ts",
+              "side": "new",
+              "startLine": 47,
+              "endLine": 51
+            }
+          ],
+          "askedAt": "2026-11-18T09:05:00.000Z"
+        }
+      ]
+    },
+    {
+      "type": "setup_checks",
+      "requestId": "c1",
+      "checks": [
+        {
+          "id": "server",
+          "ok": true,
+          "title": "Quack server is running",
+          "detail": "quackd 0.2.6 at ~/.quack/run/quack.sock",
+          "fixSteps": []
+        },
+        {
+          "id": "gh",
+          "ok": false,
+          "title": "GitHub CLI can see acme",
+          "detail": "Logged in as dev, but not authorised for the acme org's single sign-on.",
+          "fixSteps": [
+            {
+              "text": "Authorise the GitHub CLI for acme",
+              "command": "gh auth refresh -h github.com"
+            }
+          ]
+        },
+        {
+          "id": "git",
+          "ok": true,
+          "title": "git is available",
+          "detail": "git 2.47.1 at /opt/homebrew/bin/git",
+          "fixSteps": []
+        },
+        {
+          "id": "agent",
+          "ok": true,
+          "title": "An agent is ready",
+          "detail": "Cursor is ready.",
+          "fixSteps": []
+        },
+        {
+          "id": "clone",
+          "ok": false,
+          "title": "Found a clone",
+          "detail": "No clones in ~/code yet.",
+          "fixSteps": [
+            {
+              "text": "Choose the folder where you keep your clones, or clone one now."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "settings",
+      "requestId": "g1",
+      "settings": {
+        "scanRoots": [
+          "/Users/dev/code"
+        ],
+        "repoPaths": {
+          "acme/web": "/Users/dev/code/web"
+        },
+        "worktreeRoot": "/Users/dev/.quack/worktrees",
+        "retentionDays": 7,
+        "maxWorktrees": 20,
+        "chatAgent": "cursor",
+        "chatModel": "",
+        "labelsAgent": null,
+        "labelsModel": "fast",
+        "extraPath": [],
+        "pollActiveSeconds": 60,
+        "pollIdleSeconds": 300
+      },
+      "server": {
+        "version": "0.2.6",
+        "pid": 4182,
+        "startedAt": "2026-11-18T08:00:00.000Z",
+        "socketPath": "/Users/dev/.quack/run/quack.sock",
+        "logPath": "/Users/dev/.quack/logs/server.log"
+      },
+      "github": {
+        "viewer": "dev",
+        "rateLimit": {
+          "limit": 5000,
+          "remaining": 4812,
+          "resetAt": "2026-11-18T09:00:00Z"
+        }
+      },
+      "worktrees": {
+        "root": "/Users/dev/.quack/worktrees",
+        "count": 14,
+        "bytes": 6657199308
+      },
+      "clones": [
+        {
+          "repo": "acme/web",
+          "path": "/Users/dev/code/web"
+        },
+        {
+          "repo": "acme/android",
+          "path": null
+        }
+      ],
+      "removed": [
+        "/Users/dev/.quack/worktrees/acme/web/pr-1"
+      ]
+    },
+    {
+      "type": "diagnostics",
+      "requestId": "g4",
+      "text": "Quacksteps diagnostics"
+    },
+    {
+      "type": "workspace",
+      "requestId": "w1",
+      "workspace": {
+        "configured": true,
+        "gitAvailable": true,
+        "roots": [
+          {
+            "path": "/Users/dev/code",
+            "state": "ok",
+            "repoCount": 3
+          }
+        ],
+        "overrides": [],
+        "totalRepos": 3
+      },
+      "notice": "Added ~/code"
+    },
+    {
+      "type": "progress",
+      "requestId": "a1",
+      "step": "thinking"
+    },
+    {
+      "type": "event",
+      "requestId": "a1",
+      "event": {
+        "type": "text",
+        "delta": "Because "
+      }
+    },
+    {
+      "type": "event",
+      "requestId": "a1",
+      "event": {
+        "type": "tool",
+        "summary": "Read File"
+      }
+    },
+    {
+      "type": "event",
+      "requestId": "a1",
+      "event": {
+        "type": "done",
+        "sessionId": "s-1",
+        "headSha": "a41c9e2b7d3f4e5a6b7c8d9e0f1a2b3c4d5e6f7a",
+        "model": "auto"
+      }
+    },
+    {
+      "type": "event",
+      "requestId": "a1",
+      "event": {
+        "type": "error",
+        "code": "agent_not_logged_in",
+        "message": "Cursor isn't logged in.",
+        "fixSteps": [
+          {
+            "text": "Log in",
+            "command": "cursor-agent login"
+          }
+        ]
+      }
+    }
+  ]
+}

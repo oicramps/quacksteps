@@ -8,3 +8,12 @@ dist/
 credentials.json
 *.key
 .DS_Store
+
+# Swift
+.build/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+DerivedData/
+mac/build/
+.build-*/
+mac/renderer/dist/

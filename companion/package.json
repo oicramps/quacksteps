@@ -1,21 +1,20 @@
 {
   "name": "quack-companion",
   "version": "0.2.0",
-  "description": "Local companion for Quacksteps. Runs your own AI agent (Claude Code or Cursor) against a GitHub PR in an isolated worktree.",
+  "description": "Local companion for Quack. Runs your own AI agent (Claude Code or Cursor) against a GitHub PR in an isolated worktree.",
   "license": "MIT",
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/oicramps/quacksteps.git",
+    "url": "git+https://github.com/oicramps/quack.git",
     "directory": "companion"
   },
-  "homepage": "https://chromewebstore.google.com/detail/quacksteps/hkdgklakkcffcmegdagdoigpaefhlipj",
+  "homepage": "https://chromewebstore.google.com/detail/quack/hkdgklakkcffcmegdagdoigpaefhlipj",
   "bugs": {
-    "url": "https://github.com/oicramps/quacksteps/issues"
+    "url": "https://github.com/oicramps/quack/issues"
   },
   "keywords": [
     "quack",
-    "quacksteps",
     "github",
     "pull-request",
     "code-review",
@@ -43,11 +42,15 @@
     "prune": "node dist/quack-companion.cjs prune",
     "doctor": "node dist/quack-companion.cjs doctor",
     "harness": "yarn build && node scripts/harness.mjs",
+    "compile": "bun scripts/compile.ts",
     "test": "node --import ./test/register-swift.js --test test/*.test.ts",
-    "typecheck": "tsc -p ."
+    "test:bun": "bun test --preload ./test/bun-preload.ts test/",
+    "typecheck": "tsc -p .",
+    "fixtures": "node scripts/fixtures.ts"
   },
   "devDependencies": {
     "@quacksteps/shared": "0.2.0",
+    "@types/bun": "1.3.0",
     "@types/node": "^22.10.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.8.0"

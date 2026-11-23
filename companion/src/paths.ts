@@ -7,6 +7,12 @@ export const CONFIG_FILE = path.join(QUACK_DIR, 'config.json');
 export const LOG_FILE = path.join(QUACK_DIR, 'logs', 'companion.log');
 export const BIN_DIR = path.join(QUACK_DIR, 'bin');
 
+// Server (`quackd serve`) runtime files. RUN_DIR is mode 0700: it, not the socket's own mode, is the real guard.
+export const RUN_DIR = path.join(QUACK_DIR, 'run');
+export const SOCKET_PATH = path.join(RUN_DIR, 'quack.sock');
+export const LOCK_PATH = path.join(RUN_DIR, 'server.lock');
+export const SERVER_LOG_FILE = path.join(QUACK_DIR, 'logs', 'server.log');
+
 // Chrome starts native hosts with launchd's minimal PATH, so tools installed by
 // Homebrew, npm or the vendors' install scripts are searched for explicitly.
 export const EXTRA_BIN_DIRS = [
