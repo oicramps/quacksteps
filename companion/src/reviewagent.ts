@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentId, CommentAnchor, GapFinding, PrKey, ReviewState } from '@quack/shared';
+import type { AgentId, CommentAnchor, GapFinding, PrKey, ReviewState } from '@quacksteps/shared';
 import { adapters as defaultAdapters } from './adapters/index.ts';
 import type { Adapter } from './adapters/types.ts';
 import { type Config, loadConfig } from './config.ts';

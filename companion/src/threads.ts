@@ -1,4 +1,4 @@
-import type { PrKey, StoredTurn } from '@quack/shared';
+import type { PrKey, StoredTurn } from '@quacksteps/shared';
 import type { Db } from './db.ts';
 
 /** Turns kept per PR; the oldest go first. */

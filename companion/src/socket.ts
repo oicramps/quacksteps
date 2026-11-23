@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import type { ServerMessage } from '@quack/shared';
+import type { ServerMessage } from '@quacksteps/shared';
 import { MessageDecoder } from './framing.ts';
 import { log } from './log.ts';
 import { type Connection, type Router, encodeFrames } from './router.ts';

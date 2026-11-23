@@ -1,6 +1,6 @@
 /**
  * Golden socket-protocol messages, type-checked against protocol.ts. `messages.json` is generated from
- * this file (`yarn workspace @quack/companion fixtures`) and decoded by the Swift tests, so the Mac app
+ * this file (`yarn workspace quack-companion fixtures`) and decoded by the Swift tests, so the Mac app
  * and the server can't drift apart silently. Synthetic data only: this repo is public.
  */
 import type { AppMessage, ServerMessage } from '../src/protocol.ts';

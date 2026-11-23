@@ -1,4 +1,4 @@
-import type { AgentId, AgentStatus, AppMessage, AskRequest, CompanionMessage, InboxEvent, InboxMessage, PrKey, ServerMessage } from '@quack/shared';
+import type { AgentId, AgentStatus, AppMessage, AskRequest, CompanionMessage, InboxEvent, InboxMessage, PrKey, ServerMessage } from '@quacksteps/shared';
 import type { InboxService, InboxSnapshot } from './inbox.ts';
 import { DiffError, DiffService } from './diff.ts';
 import type { LabelRunner, LabelsView } from './labels.ts';
@@ -9,7 +9,7 @@ import type { DraftStore, ReviewWriter } from './reviewwrite.ts';
 import { type ReviewAgent, ReviewAgentError } from './reviewagent.ts';
 import { ReviewWriteError } from './reviewwrite.ts';
 import { GhError } from './gh.ts';
-import { PROTOCOL_VERSION, QUACK_VERSION, SOCKET_PROTOCOL_VERSION } from '@quack/shared';
+import { PROTOCOL_VERSION, QUACK_VERSION, SOCKET_PROTOCOL_VERSION } from '@quacksteps/shared';
 import { adapters as defaultAdapters } from './adapters/index.ts';
 import type { Adapter } from './adapters/types.ts';
 import { listFailingChecks } from './checks.ts';

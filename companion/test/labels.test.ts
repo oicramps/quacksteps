@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { AgentId, PrKey } from '@quack/shared';
+import type { AgentId, PrKey } from '@quacksteps/shared';
 import type { Adapter, AdapterEvent, AskOpts } from '../src/adapters/types.ts';
 import type { Config } from '../src/config.ts';
 import { openDb } from '../src/db.ts';

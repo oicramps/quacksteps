@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CONFIG_FILE, HOME, QUACK_DIR, contractHome, expandHome } from './paths.ts';
-import type { AgentId, SettingsPatch } from '@quack/shared';
+import type { AgentId, SettingsPatch } from '@quacksteps/shared';
 import { log } from './log.ts';
 
 export interface Config {

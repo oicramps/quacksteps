@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
-import { QUACK_VERSION, SOCKET_PROTOCOL_VERSION } from '@quack/shared';
-import type { HelloResponse } from '@quack/shared';
+import { QUACK_VERSION, SOCKET_PROTOCOL_VERSION } from '@quacksteps/shared';
+import type { HelloResponse } from '@quacksteps/shared';
 import { adapters } from './adapters/index.ts';
 import { loadConfig } from './config.ts';
 import { STATE_DB } from './db.ts';

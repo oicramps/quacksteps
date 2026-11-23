@@ -1,4 +1,4 @@
-import type { AuthorState, ClosedInfo, ReviewState, InboxEvent, InboxItem, InboxMessage, PrKey, StackInfo } from '@quack/shared';
+import type { AuthorState, ClosedInfo, ReviewState, InboxEvent, InboxItem, InboxMessage, PrKey, StackInfo } from '@quacksteps/shared';
 import { type Db, getKv, setKv, tx } from './db.ts';
 import { GhError, type GhRunner, type GraphQLErrorEntry, MERGE_CHUNK, fixSso, graphql, samlErrors } from './gh.ts';
 import { log } from './log.ts';

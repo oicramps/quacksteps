@@ -8,7 +8,7 @@ import type {
   ReviewThread,
   ReviewThreadsMessage,
   ViewedState,
-} from '@quack/shared';
+} from '@quacksteps/shared';
 import type { Db } from './db.ts';
 import { GhError, type GhRunner, type GraphQLResult, graphql, mutate } from './gh.ts';
 import { log } from './log.ts';

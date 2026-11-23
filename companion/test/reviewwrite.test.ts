@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { PrKey, ServerMessage } from '@quack/shared';
+import type { PrKey, ServerMessage } from '@quacksteps/shared';
 import { openDb } from '../src/db.ts';
 import { GhError, type GhRunner, MUTATIONS, QUERIES } from '../src/gh.ts';
 import { createRouter } from '../src/router.ts';

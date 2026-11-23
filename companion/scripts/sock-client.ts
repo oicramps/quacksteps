@@ -16,8 +16,8 @@
 // --socket=<path> overrides ~/.quack/run/quack.sock. Prints every message as one JSON line;
 // text deltas are printed inline so an answer reads naturally.
 import net from 'node:net';
-import type { InboxMessage, PrDiffMessage, RiskLabelsMessage } from '@quack/shared';
-import { QUACK_VERSION, SOCKET_PROTOCOL_VERSION } from '@quack/shared';
+import type { InboxMessage, PrDiffMessage, RiskLabelsMessage } from '@quacksteps/shared';
+import { QUACK_VERSION, SOCKET_PROTOCOL_VERSION } from '@quacksteps/shared';
 import { MessageDecoder, encodeMessage } from '../src/framing.ts';
 import { SOCKET_PATH } from '../src/paths.ts';
 

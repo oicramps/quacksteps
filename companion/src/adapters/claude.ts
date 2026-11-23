@@ -1,4 +1,4 @@
-import type { AgentStatus, FixStep } from '@quack/shared';
+import type { AgentStatus, FixStep } from '@quacksteps/shared';
 import { findBinary, run } from '../exec.ts';
 import { clip, relativeTo, runJsonLines, stripAnsi } from './stream.ts';
 import type { Adapter, AdapterEvent, AskOpts, LineParser } from './types.ts';

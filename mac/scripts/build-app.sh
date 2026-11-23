@@ -20,7 +20,7 @@ echo "==> quackd $VERSION"
 (cd "$ROOT/companion" && bun scripts/compile.ts >/dev/null)
 
 echo "==> diff renderer"
-(cd "$ROOT" && yarn -s workspace @quack/renderer build >/dev/null)
+(cd "$ROOT" && yarn -s workspace @quacksteps/renderer build >/dev/null)
 
 echo "==> Swift ($CONFIG)"
 (cd "$ROOT/mac/Packages" && swift build -c "$CONFIG" --product Quacksteps 2>&1 | grep -E "error|warning: |Compiling|Build complete" | grep -v "^\s*$" | tail -5)

@@ -1,4 +1,4 @@
-import type { ErrorCode, FixStep, PrDiffFile, PrKey } from '@quack/shared';
+import type { ErrorCode, FixStep, PrDiffFile, PrKey } from '@quacksteps/shared';
 import { type Config, loadConfig } from './config.ts';
 import { GhError, REST, restGet } from './gh.ts';
 import { type NumstatEntry, parseNumstat, splitDiff } from './labels.ts';

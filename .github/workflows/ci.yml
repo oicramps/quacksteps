@@ -24,7 +24,7 @@ jobs:
       - run: yarn test
       - run: yarn typecheck
       - run: yarn workspace quack-companion build
-      - run: yarn workspace @quack/extension zip
+      - run: yarn workspace @quacksteps/extension zip
 
   mac:
     runs-on: macos-26
@@ -50,7 +50,7 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - run: yarn install --frozen-lockfile
-      - run: yarn workspace @quack/renderer build
+      - run: yarn workspace @quacksteps/renderer build
       - name: Swift build and test
         working-directory: mac/Packages
         run: |

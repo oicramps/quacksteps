@@ -2,7 +2,7 @@
 // The repo is public, so fixtures never contain real PR data.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { InboxEvent, InboxItem } from '@quack/shared';
+import type { InboxEvent, InboxItem } from '@quacksteps/shared';
 import { openDb } from '../src/db.ts';
 import type { RunResult } from '../src/exec.ts';
 import { type GhRunner, QUERIES } from '../src/gh.ts';

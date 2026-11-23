@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { AskRequest, CompanionMessage, PrKey, StoredTurn } from '@quack/shared';
+import type { AskRequest, CompanionMessage, PrKey, StoredTurn } from '@quacksteps/shared';
 import type { Adapter, AdapterEvent } from '../src/adapters/types.ts';
 import { Slots, limitAgents } from '../src/adapters/limit.ts';
 import { openDb } from '../src/db.ts';
