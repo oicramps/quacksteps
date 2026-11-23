@@ -4,10 +4,14 @@ import type {
   AskRequest,
   StartReviewRequest,
   CodeSelection,
+  CommentAnchor,
+  DraftOrigin,
   ExtensionMessage,
   HistoryTurn,
   PrKey,
   PrRef,
+  ReviewEvent,
+  SaveDraftRequest,
   SettingsPatch,
   WorkspacePrTarget,
 } from '@quack/shared';
@@ -150,6 +154,72 @@ function optionalBool(value: unknown, label: string): boolean | undefined {
   return value;
 }
 
+/** GitHub GraphQL node ids (PRRT_…, PRR_…): base64-ish, never a flag. */
+const NODE_ID = /^[A-Za-z0-9][A-Za-z0-9_=-]{0,199}$/;
+const DRAFT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const FULL_SHA = /^[0-9a-f]{40}$/;
+const EVENTS: ReviewEvent[] = ['COMMENT', 'APPROVE', 'REQUEST_CHANGES'];
+const ORIGINS: DraftOrigin[] = ['me', 'agent', 'gap_check'];
+/** GitHub's limit for a comment or review body. */
+const MAX_BODY = 65_536;
+
+function fullSha(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !FULL_SHA.test(value)) fail(`invalid ${label}`);
+  return value;
+}
+
+function validateBody(value: unknown, label: string, allowEmpty = false): string {
+  if (typeof value !== 'string' || value.length > MAX_BODY || value.includes('\0')) fail(`invalid ${label}`);
+  if (!allowEmpty && !value.trim()) fail(`${label} is empty`);
+  return value;
+}
+
+function validateLine(value: unknown, label: string): number {
+  if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > 1_000_000) fail(`invalid ${label}`);
+  return value as number;
+}
+
+function validateAnchor(value: unknown): CommentAnchor {
+  const a = value as Partial<CommentAnchor> | null;
+  if (!a || typeof a !== 'object' || Array.isArray(a)) fail('invalid anchor');
+  if (typeof a.path !== 'string' || !isSafeRepoPath(a.path)) fail('invalid anchor path');
+  if (a.side !== 'LEFT' && a.side !== 'RIGHT') fail('invalid anchor side');
+  const out: CommentAnchor = { path: a.path, side: a.side, line: validateLine(a.line, 'anchor line') };
+  if (a.startLine !== undefined) {
+    out.startLine = validateLine(a.startLine, 'anchor startLine');
+    if (out.startLine > out.line) fail('anchor startLine is after line');
+    if (out.startLine === out.line) delete out.startLine;
+  }
+  return out;
+}
+
+function validateDraft(value: unknown): SaveDraftRequest['draft'] {
+  const d = value as Record<string, unknown> | null;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) fail('draft must be an object');
+  if (typeof d.headSha !== 'string' || !FULL_SHA.test(d.headSha)) fail('invalid draft headSha');
+  if (!ORIGINS.includes(d.origin as DraftOrigin)) fail('invalid draft origin');
+  const out: SaveDraftRequest['draft'] = { headSha: d.headSha, body: validateBody(d.body, 'comment'), origin: d.origin as DraftOrigin };
+  if (d.id !== undefined) {
+    if (typeof d.id !== 'string' || !DRAFT_ID.test(d.id)) fail('invalid draft id');
+    out.id = d.id;
+  }
+  if ((d.anchor === undefined) === (d.replyTo === undefined)) fail('a draft needs exactly one of anchor and replyTo');
+  if (d.anchor !== undefined) out.anchor = validateAnchor(d.anchor);
+  if (d.replyTo !== undefined) {
+    if (typeof d.replyTo !== 'string' || !NODE_ID.test(d.replyTo)) fail('invalid replyTo');
+    out.replyTo = d.replyTo;
+  }
+  return out;
+}
+
+function validateEvent(value: unknown, allowNull: true): ReviewEvent | null;
+function validateEvent(value: unknown, allowNull?: false): ReviewEvent;
+function validateEvent(value: unknown, allowNull = false): ReviewEvent | null {
+  if (allowNull && value === null) return null;
+  if (!EVENTS.includes(value as ReviewEvent)) fail('invalid event');
+  return value as ReviewEvent;
+}
+
 const CLIENT_VERSION = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,39}$/;
 const PATCH_KEYS = new Set(['retentionDays', 'maxWorktrees', 'chatAgent', 'chatModel', 'labelsAgent', 'labelsModel', 'extraPath', 'pollActiveSeconds', 'pollIdleSeconds']);
 
@@ -261,6 +331,61 @@ export function validateAppMessage(raw: unknown): AppMessage {
         requestId,
         pr: validatePrKey(r.pr),
         ...(r.headSha !== undefined && { headSha: optionalSha(r.headSha) }),
+        ...(r.since !== undefined && { since: fullSha(r.since, 'since') }),
+      };
+    // Writing reviews (v3)
+    case 'review_drafts':
+    case 'review_threads':
+    case 'assign_me':
+      return { type: m.type, requestId, pr: validatePrKey(r.pr) };
+    case 'save_draft':
+      return { type: 'save_draft', requestId, pr: validatePrKey(r.pr), draft: validateDraft(r.draft) };
+    case 'delete_draft':
+      if (typeof r.id !== 'string' || !DRAFT_ID.test(r.id)) fail('invalid draft id');
+      return { type: 'delete_draft', requestId, pr: validatePrKey(r.pr), id: r.id };
+    case 'save_review_summary':
+      return { type: 'save_review_summary', requestId, pr: validatePrKey(r.pr), summary: validateBody(r.summary, 'summary', true), event: validateEvent(r.event, true) };
+    case 'resolve_thread':
+      if (typeof r.threadId !== 'string' || !NODE_ID.test(r.threadId)) fail('invalid threadId');
+      if (typeof r.resolved !== 'boolean') fail('invalid resolved');
+      return { type: 'resolve_thread', requestId, pr: validatePrKey(r.pr), threadId: r.threadId, resolved: r.resolved };
+    case 'mark_viewed':
+      if (typeof r.path !== 'string' || !isSafeRepoPath(r.path)) fail('invalid path');
+      if (typeof r.viewed !== 'boolean') fail('invalid viewed');
+      return { type: 'mark_viewed', requestId, pr: validatePrKey(r.pr), path: r.path, viewed: r.viewed };
+    case 'draft_comment': {
+      if (!AGENTS.includes(r.agent as AgentId)) fail('unknown agent');
+      if (typeof r.model !== 'string' || !MODEL.test(r.model)) fail('invalid model');
+      const text = (v: unknown, label: string, max: number) => {
+        if (typeof v !== 'string' || v.length > max || v.includes('\0')) fail(`invalid ${label}`);
+        return v;
+      };
+      return {
+        type: 'draft_comment',
+        requestId,
+        pr: validatePrKey(r.pr),
+        agent: r.agent as AgentId,
+        model: r.model,
+        headSha: fullSha(r.headSha, 'headSha'),
+        anchor: validateAnchor(r.anchor),
+        ...(r.lines !== undefined && { lines: text(r.lines, 'lines', 50_000) }),
+        question: text(r.question, 'question', 10_000),
+        answer: text(r.answer, 'answer', 100_000),
+      };
+    }
+    case 'gap_check':
+      if (!AGENTS.includes(r.agent as AgentId)) fail('unknown agent');
+      if (typeof r.model !== 'string' || !MODEL.test(r.model)) fail('invalid model');
+      return { type: 'gap_check', requestId, pr: validatePrKey(r.pr), agent: r.agent as AgentId, model: r.model, headSha: fullSha(r.headSha, 'headSha') };
+    case 'submit_review':
+      if (typeof r.headSha !== 'string' || !FULL_SHA.test(r.headSha)) fail('invalid headSha');
+      return {
+        type: 'submit_review',
+        requestId,
+        pr: validatePrKey(r.pr),
+        headSha: r.headSha,
+        event: validateEvent(r.event),
+        summary: validateBody(r.summary, 'summary', true),
       };
     default:
       return validateMessage(raw);

@@ -29,6 +29,8 @@ export interface PrDiff {
   headSha: string;
   files: PrDiffFile[];
   source: 'git' | 'github';
+  /** Set for "Since my last review": the files changed between that commit and the head. */
+  since?: { sha: string; commits: number };
 }
 
 export class DiffError extends Error {
@@ -127,7 +129,10 @@ export interface DiffOps {
   findClone(config: Config, owner: string, repo: string): Promise<CloneSearchResult>;
   /** Fetches the PR and resolves its base and head (the latest head when `headSha` is absent). */
   context(clone: string, pr: PrKey, headSha?: string): Promise<{ baseSha: string; headSha: string }>;
-  gitDiff(clone: string, args: string[], baseSha: string, headSha: string): Promise<string>;
+  /** `direct`: the two trees (`a b`), for changes since a review; otherwise from the merge base (`a...b`). */
+  gitDiff(clone: string, args: string[], baseSha: string, headSha: string, direct?: boolean): Promise<string>;
+  /** Commits reachable from `head` but not `from`, or null when `from` isn't in the clone. */
+  countCommits?(clone: string, from: string, head: string): Promise<number | null>;
   rest(path: string, opts: { paginate?: boolean; jq?: string }): Promise<string>;
 }
 
@@ -137,18 +142,26 @@ export const realDiffOps: DiffOps = {
     const ctx = await resolvePr(clone, { ...pr, ...(headSha && { headSha }) });
     return { baseSha: ctx.baseSha, headSha: ctx.headSha };
   },
-  async gitDiff(clone, args, baseSha, headSha) {
+  async gitDiff(clone, args, baseSha, headSha, direct) {
     const base = asCommitSha(baseSha);
     const head = asCommitSha(headSha);
     if (!base || !head) throw new Error('refusing to diff a non-commit id');
-    const res = await runGit(['-C', clone, 'diff', '--no-color', '--no-ext-diff', '-M', ...args, `${base}...${head}`], { timeoutMs: 60_000, maxBuffer: 256 * 1024 * 1024 });
+    const range = direct ? [base, head] : [`${base}...${head}`];
+    const res = await runGit(['-C', clone, 'diff', '--no-color', '--no-ext-diff', '-M', ...args, ...range, '--'], { timeoutMs: 60_000, maxBuffer: 256 * 1024 * 1024 });
     if (res.code !== 0) throw new Error(`git diff failed: ${res.stderr.trim().split('\n')[0]}`);
     return res.stdout;
   },
   rest: (path, opts) => restGet(path, opts),
+  async countCommits(clone, from, head) {
+    const a = asCommitSha(from);
+    const b = asCommitSha(head);
+    if (!a || !b) return null;
+    const res = await runGit(['-C', clone, 'rev-list', '--count', `${a}..${b}`, '--'], { timeoutMs: 30_000 });
+    return res.code === 0 ? Number(res.stdout.trim()) : null;
+  },
 };
 
-const key = (pr: PrKey, headSha: string) => `${pr.owner}/${pr.repo}#${pr.number}@${headSha}`.toLowerCase();
+const key = (pr: PrKey, headSha: string, since?: string) => `${pr.owner}/${pr.repo}#${pr.number}@${headSha}${since ? `~${since}` : ''}`.toLowerCase();
 
 export class DiffService {
   private readonly config: () => Config;
@@ -161,18 +174,46 @@ export class DiffService {
     this.ops = opts.ops ?? realDiffOps;
   }
 
-  /** The PR's diff at `headSha`, or at its latest head. Throws DiffError with fix steps. */
-  async get(pr: PrKey, headSha?: string): Promise<PrDiff> {
+  /**
+   * The PR's diff at `headSha`, or at its latest head. With `since` (a commit I reviewed before), only
+   * what changed from that commit to the head. Throws DiffError with fix steps.
+   */
+  async get(pr: PrKey, headSha?: string, since?: string): Promise<PrDiff> {
     if (headSha) {
-      const hit = this.cache.get(key(pr, headSha));
+      const hit = this.cache.get(key(pr, headSha, since));
       if (hit) return hit;
     }
     const started = Date.now();
     const { clone } = await this.ops.findClone(this.config(), pr.owner, pr.repo);
-    const diff = clone ? await this.viaGit(clone, pr, headSha) : await this.viaGitHub(pr, headSha);
-    log('pr diff', key(pr, diff.headSha.slice(0, 7)), diff.source, `${diff.files.length} files`, `${Date.now() - started}ms`);
+    let diff = clone ? await this.viaGit(clone, pr, headSha) : await this.viaGitHub(pr, headSha);
+    if (since) diff = clone ? await this.sinceViaGit(clone, pr, diff, since) : await this.sinceViaGitHub(pr, diff, since);
+    log('pr diff', key(pr, diff.headSha.slice(0, 7), since?.slice(0, 7)), diff.source, `${diff.files.length} files`, `${Date.now() - started}ms`);
     this.remember(pr, diff);
     return diff;
+  }
+
+  private async sinceViaGit(clone: string, pr: PrKey, full: PrDiff, since: string): Promise<PrDiff> {
+    // A full diff is cached by itself first, so switching back to "everything" is instant.
+    this.remember(pr, full);
+    const commits = (await this.ops.countCommits?.(clone, since, full.headSha)) ?? null;
+    if (commits === null) return this.sinceViaGitHub(pr, full, since);
+    const [numstat, diff] = await Promise.all([
+      this.ops.gitDiff(clone, ['--numstat', '-z'], since, full.headSha, true),
+      this.ops.gitDiff(clone, [], since, full.headSha, true),
+    ]);
+    return { ...full, files: filesFromGit(parseNumstat(numstat), diff), since: { sha: since, commits } };
+  }
+
+  private async sinceViaGitHub(pr: PrKey, full: PrDiff, since: string): Promise<PrDiff> {
+    try {
+      const out = await this.ops.rest(REST.compare(pr.owner, pr.repo, since, full.headSha), { jq: `{commits: .total_commits}, (.files[] | ${REST_FILES_JQ.replace(/^\.\[\] \| /, '')})` });
+      const [first, ...rest] = out.split('\n').filter((l) => l.trim());
+      const commits = first ? (JSON.parse(first) as { commits: number }).commits : 0;
+      return { ...full, files: filesFromRest(rest.join('\n')), since: { sha: since, commits } };
+    } catch (err) {
+      if (err instanceof GhError) throw new DiffError(err.code, err.message, err.fixSteps);
+      throw new DiffError('fetch_failed', `Could not compare with your last review: ${(err as Error).message}`);
+    }
   }
 
   private async viaGit(clone: string, pr: PrKey, headSha?: string): Promise<PrDiff> {
@@ -207,7 +248,7 @@ export class DiffService {
   }
 
   private remember(pr: PrKey, diff: PrDiff): void {
-    const k = key(pr, diff.headSha);
+    const k = key(pr, diff.headSha, diff.since?.sha);
     this.cache.delete(k);
     this.cache.set(k, diff);
     while (this.cache.size > CACHE_ENTRIES) this.cache.delete(this.cache.keys().next().value!);

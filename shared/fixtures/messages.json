@@ -5,7 +5,7 @@
       "requestId": "h1",
       "client": "mac-app",
       "clientVersion": "0.2.6",
-      "protocol": 2
+      "protocol": 3
     },
     {
       "type": "subscribe",
@@ -197,7 +197,7 @@
       "type": "hello",
       "requestId": "h1",
       "version": "0.2.6",
-      "protocol": 2,
+      "protocol": 3,
       "viewer": "dev",
       "capabilities": {
         "workspace": true,
@@ -207,7 +207,8 @@
         "agents": [
           "cursor",
           "claude-code"
-        ]
+        ],
+        "write": true
       }
     },
     {

@@ -8,6 +8,8 @@ import { openDb } from './db.ts';
 import { InboxService } from './inbox.ts';
 import { LabelRunner } from './labels.ts';
 import { ThreadStore } from './threads.ts';
+import { DraftStore, ReviewWriter } from './reviewwrite.ts';
+import { ReviewAgent } from './reviewagent.ts';
 import { SettingsService, applyConfig } from './settings.ts';
 import { adapters } from './adapters/index.ts';
 import { ReviewingService } from './reviewing.ts';
@@ -196,6 +198,9 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer | nu
   // Starting or stopping a review changes the inbox's "Reviewing" filter right away.
   reviewing.subscribe(() => inbox.republish());
   const threads = new ThreadStore(db);
+  const drafts = new DraftStore(db);
+  const reviewWrite = { drafts, writer: new ReviewWriter(drafts) };
+  const reviewAgent = new ReviewAgent({ drafts, review: (pr) => reviewing.get(pr) ?? undefined });
   const reviewedKeys = () => new Set(reviewing.all().map(({ pr }) => `${pr.owner}/${pr.repo}#${pr.number}`.toLowerCase()));
   const settings = new SettingsService({
     adapters,
@@ -213,6 +218,8 @@ export async function serve(opts: ServeOptions = {}): Promise<RunningServer | nu
     inbox,
     reviewing,
     labels,
+    reviewWrite,
+    reviewAgent,
     onShutdown: () => {
       exitCode = 1;
       void drain('shutdown request');

@@ -5,6 +5,10 @@ import type { LabelRunner, LabelsView } from './labels.ts';
 import type { SettingsService } from './settings.ts';
 import type { ThreadStore } from './threads.ts';
 import type { ReviewingService } from './reviewing.ts';
+import type { DraftStore, ReviewWriter } from './reviewwrite.ts';
+import { type ReviewAgent, ReviewAgentError } from './reviewagent.ts';
+import { ReviewWriteError } from './reviewwrite.ts';
+import { GhError } from './gh.ts';
 import { PROTOCOL_VERSION, QUACK_VERSION, SOCKET_PROTOCOL_VERSION } from '@quack/shared';
 import { adapters as defaultAdapters } from './adapters/index.ts';
 import type { Adapter } from './adapters/types.ts';
@@ -62,6 +66,10 @@ export interface RouterOptions {
   settings?: SettingsService;
   /** PR diffs. Defaults to a fresh service. */
   diffs?: DiffService;
+  /** Writing reviews (v3): drafts on this Mac and the GitHub writes. Absent on the stdio host. */
+  reviewWrite?: { drafts: DraftStore; writer: ReviewWriter };
+  /** "Turn into comment" and the gap check. Absent on the stdio host. */
+  reviewAgent?: ReviewAgent;
 }
 
 const samePr = (a: PrKey, b: PrKey) =>
@@ -267,7 +275,7 @@ export function createRouter(opts: RouterOptions = {}) {
           version: QUACK_VERSION,
           protocol: SOCKET_PROTOCOL_VERSION,
           viewer: opts.viewer?.() ?? opts.inbox?.viewer ?? null,
-          capabilities: { workspace: true, inbox: !!opts.inbox, labels: !!opts.labels, review: !!opts.reviewing, agents: agentIds },
+          capabilities: { workspace: true, inbox: !!opts.inbox, labels: !!opts.labels, review: !!opts.reviewing, agents: agentIds, write: !!opts.reviewWrite },
         });
         break;
       case 'shutdown':
@@ -406,8 +414,8 @@ export function createRouter(opts: RouterOptions = {}) {
         // A reviewed PR shows the reviewed commit unless the app asks for another.
         const pr = message.pr;
         const headSha = message.headSha ?? opts.reviewing?.get(pr)?.headSha;
-        diffs.get(pr, headSha || undefined).then(
-          ({ baseSha, headSha, files }) => conn.send({ type: 'pr_diff', requestId: message.requestId, pr, baseSha, headSha, files }),
+        diffs.get(pr, headSha || undefined, message.since).then(
+          ({ baseSha, headSha, files, since }) => conn.send({ type: 'pr_diff', requestId: message.requestId, pr, baseSha, headSha, files, ...(since && { since }) }),
           (err: unknown) => {
             log('pr diff failed', String(err));
             const e = err instanceof DiffError ? err : new DiffError('fetch_failed', (err as Error).message);
@@ -436,6 +444,109 @@ export function createRouter(opts: RouterOptions = {}) {
         else {
           const work = message.type === 'save_settings' ? svc.save(message.patch) : message.type === 'prune_worktrees' ? svc.prune() : svc.snapshot();
           work.then((snap) => conn.send({ type: 'settings', requestId, ...snap }), failed);
+        }
+        break;
+      }
+      case 'review_drafts':
+      case 'save_draft':
+      case 'delete_draft':
+      case 'save_review_summary':
+      case 'review_threads':
+      case 'resolve_thread':
+      case 'mark_viewed':
+      case 'assign_me':
+      case 'submit_review': {
+        const rw = opts.reviewWrite;
+        if (!rw) {
+          notImplemented(conn, message.requestId, 'Writing reviews');
+          break;
+        }
+        const { requestId, pr } = message;
+        const failed = (err: unknown) => {
+          if (!(err instanceof ReviewWriteError)) log(message.type, 'failed', String(err));
+          const code = err instanceof ReviewWriteError || err instanceof GhError ? err.code : 'bad_request';
+          const fixSteps = err instanceof GhError && err.fixSteps.length ? err.fixSteps : undefined;
+          conn.send({ type: 'event', requestId, event: { type: 'error', code, message: (err as Error).message, ...(fixSteps && { fixSteps }) } });
+        };
+        const drafts = () => conn.send({ type: 'review_drafts', requestId, pr, ...rw.drafts.list(pr) });
+        const threads = () => rw.writer.threads(pr).then((t) => conn.send({ type: 'review_threads', requestId, ...t }), failed);
+        const ack = () => conn.send({ type: 'ack', requestId });
+        try {
+          switch (message.type) {
+            case 'review_drafts':
+              drafts();
+              break;
+            case 'save_draft':
+              rw.drafts.save(pr, message.draft);
+              drafts();
+              break;
+            case 'delete_draft':
+              rw.drafts.delete(pr, message.id);
+              drafts();
+              break;
+            case 'save_review_summary':
+              rw.drafts.saveSummary(pr, message.summary, message.event);
+              drafts();
+              break;
+            case 'review_threads':
+              threads();
+              break;
+            case 'resolve_thread':
+              rw.writer.resolve(pr, message.threadId, message.resolved).then(threads, failed);
+              break;
+            case 'mark_viewed':
+              rw.writer.markViewed(pr, message.path, message.viewed).then(ack, failed);
+              break;
+            case 'assign_me':
+              rw.writer.assignMe(pr).then(ack, failed);
+              break;
+            case 'submit_review':
+              rw.writer.submit(pr, message.headSha, message.event, message.summary).then(
+                (r) => conn.send({ type: 'review_submitted', requestId, pr, event: message.event, ...r }),
+                failed,
+              );
+              break;
+          }
+        } catch (err) {
+          failed(err);
+        }
+        break;
+      }
+      case 'draft_comment':
+      case 'gap_check': {
+        const agent = opts.reviewAgent;
+        if (!agent) {
+          notImplemented(conn, message.requestId, 'Agent help for reviews');
+          break;
+        }
+        const { requestId, pr } = message;
+        const controller = new AbortController();
+        s.running.set(requestId, controller);
+        const done = () => s.running.delete(requestId);
+        const failed = (err: unknown) => {
+          done();
+          if (controller.signal.aborted) {
+            conn.send({ type: 'event', requestId, event: { type: 'error', code: 'cancelled', message: 'Stopped.' } });
+            return;
+          }
+          if (!(err instanceof ReviewAgentError)) log(message.type, 'failed', String(err));
+          const code = err instanceof ReviewAgentError ? err.code : 'agent_failed';
+          conn.send({ type: 'event', requestId, event: { type: 'error', code, message: (err as Error).message } });
+        };
+        if (message.type === 'draft_comment') {
+          const { agent: a, model, headSha, anchor, lines, question, answer } = message;
+          agent.draftComment(pr, { agent: a, model, headSha, anchor, lines, question, answer }, controller.signal).then((body) => {
+            done();
+            conn.send({ type: 'draft_comment', requestId, pr, body });
+          }, failed);
+        } else {
+          const { agent: a, model, headSha } = message;
+          agent
+            .gapCheck(pr, { agent: a, model, headSha }, (summary) => conn.send({ type: 'event', requestId, event: { type: 'tool', summary } }), controller.signal)
+            .then((r) => {
+              done();
+              conn.send({ type: 'gap_check', requestId, pr, headSha, agent: a, model, ...r });
+            }, failed);
         }
         break;
       }

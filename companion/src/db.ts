@@ -91,6 +91,44 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX threads_by_pr ON threads (owner, repo, number, id);
   `,
+  // 5: writing reviews. Draft comments and replies, the submit sheet's summary, and the pending
+  // review a submit is building (so a crash mid-submit can be cleaned up on the next try).
+  `
+  CREATE TABLE review_drafts (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    number INTEGER NOT NULL,
+    head_sha TEXT NOT NULL,
+    path TEXT,
+    side TEXT,
+    line INTEGER,
+    start_line INTEGER,
+    reply_to TEXT,
+    body TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX review_drafts_by_pr ON review_drafts (owner, repo, number, created_at);
+  CREATE TABLE review_summaries (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    number INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    event TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, number)
+  );
+  CREATE TABLE review_submissions (
+    owner TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    number INTEGER NOT NULL,
+    review_id TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    PRIMARY KEY (owner, repo, number)
+  );
+  `,
 ];
 
 export type Db = DatabaseSync;

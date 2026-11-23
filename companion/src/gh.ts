@@ -2,9 +2,10 @@ import type { ErrorCode, FixStep } from '@quack/shared';
 import { type RunResult, findBinary, run } from './exec.ts';
 
 /**
- * Read-only GitHub access for the server. The only GraphQL documents it can send are the
- * constants in `QUERIES`, compiled into the binary; there is no way to pass a document in,
- * so the server can never send a mutation.
+ * GitHub access for the server. The only GraphQL documents it can send are compiled into the
+ * binary: the read `QUERIES`, and the review-writing `MUTATIONS` (v3). There is no way to pass a
+ * document in. Mutations go only through `mutate()`, which the router calls for explicit requests
+ * from the app (Submit review, Resolve, Viewed, Assign me); agent code never imports it.
  */
 
 export const GH_ENV = { GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', GH_NO_EXTENSION_UPDATE_NOTIFIER: '1' };
@@ -83,6 +84,41 @@ export const QUERIES = {
     pullRequests(headRefName: $head, states: OPEN, first: 1) { nodes { number title headRefName baseRefName } }
   }
 }`,
+  /**
+   * Writing reviews: the PR's node id and head, who I am, any pending review of mine (GitHub keeps
+   * one per person per PR) and my submitted reviews, newest last.
+   */
+  reviewContext: `query QuackReviewContext($owner: String!, $name: String!, $number: Int!) {
+  viewer { login id }
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    id headRefOid url
+    author { login }
+    assignees(first: 50) { nodes { login } }
+    reviewRequests(first: 50) { nodes { requestedReviewer { __typename ... on User { login } } } }
+    pending: reviews(states: PENDING, first: 5) { nodes { id author { login } } }
+    submitted: reviews(states: [COMMENTED, APPROVED, CHANGES_REQUESTED], last: 100) {
+      nodes { state submittedAt author { login } commit { oid } }
+    }
+  } }
+}`,
+  /** Review threads with their comments, 100 at a time. */
+  reviewThreads: `query QuackReviewThreads($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    reviewThreads(first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        id path line startLine originalLine diffSide isResolved isOutdated viewerCanResolve viewerCanUnresolve viewerCanReply
+        comments(first: 100) { nodes { id author { login } body createdAt url } }
+      }
+    }
+  } }
+}`,
+  /** Viewed state per file, 100 at a time. */
+  viewedFiles: `query QuackViewedFiles($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    files(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { path viewerViewedState } }
+  } }
+}`,
   /** One cheap query against an org, so onboarding can detect SSO that hides org PRs. */
   orgAccess: `query QuackOrgAccess($login: String!) {
   organization(login: $login) { login repositories(first: 1) { totalCount } }
@@ -90,6 +126,54 @@ export const QUERIES = {
 } as const;
 
 export type QueryName = keyof typeof QUERIES;
+
+/**
+ * The only writes the server can make, all about reviewing a PR. A review is built in steps with
+ * scalar variables only: start a pending review, add each comment as a thread and each reply, then
+ * submit it; on any failure the pending review is deleted, so nothing is half-posted.
+ */
+export const MUTATIONS = {
+  startReview: `mutation QuackStartReview($pr: ID!, $commit: GitObjectID!) {
+  addPullRequestReview(input: { pullRequestId: $pr, commitOID: $commit }) { pullRequestReview { id } }
+}`,
+  addThread: `mutation QuackAddThread($review: ID!, $path: String!, $body: String!, $line: Int!, $side: DiffSide!, $startLine: Int, $startSide: DiffSide) {
+  addPullRequestReviewThread(input: { pullRequestReviewId: $review, path: $path, body: $body, line: $line, side: $side, startLine: $startLine, startSide: $startSide }) { thread { id } }
+}`,
+  addReply: `mutation QuackAddReply($review: ID!, $thread: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(input: { pullRequestReviewId: $review, pullRequestReviewThreadId: $thread, body: $body }) { comment { id } }
+}`,
+  submitReview: `mutation QuackSubmitReview($review: ID!, $event: PullRequestReviewEvent!, $body: String) {
+  submitPullRequestReview(input: { pullRequestReviewId: $review, event: $event, body: $body }) { pullRequestReview { id url state } }
+}`,
+  deleteReview: `mutation QuackDeleteReview($review: ID!) {
+  deletePullRequestReview(input: { pullRequestReviewId: $review }) { pullRequestReview { id } }
+}`,
+  resolveThread: `mutation QuackResolveThread($thread: ID!) {
+  resolveReviewThread(input: { threadId: $thread }) { thread { id isResolved } }
+}`,
+  unresolveThread: `mutation QuackUnresolveThread($thread: ID!) {
+  unresolveReviewThread(input: { threadId: $thread }) { thread { id isResolved } }
+}`,
+  markViewed: `mutation QuackMarkViewed($pr: ID!, $path: String!) {
+  markFileAsViewed(input: { pullRequestId: $pr, path: $path }) { pullRequest { id } }
+}`,
+  unmarkViewed: `mutation QuackUnmarkViewed($pr: ID!, $path: String!) {
+  unmarkFileAsViewed(input: { pullRequestId: $pr, path: $path }) { pullRequest { id } }
+}`,
+  assign: `mutation QuackAssign($pr: ID!, $users: [ID!]!) {
+  addAssigneesToAssignable(input: { assignableId: $pr, assigneeIds: $users }) { clientMutationId }
+}`,
+  requestReview: `mutation QuackRequestReview($pr: ID!, $users: [ID!]!) {
+  requestReviews(input: { pullRequestId: $pr, userIds: $users, union: true }) { clientMutationId }
+}`,
+} as const;
+
+export type MutationName = keyof typeof MUTATIONS;
+
+export const FIX_WRITE_ACCESS: FixStep[] = [
+  { text: 'Give the GitHub CLI permission to write reviews', command: 'gh auth refresh --hostname github.com --scopes repo' },
+  { text: 'If it still fails, ask for write access to the repository, then press Try again.' },
+];
 
 /** A gh failure the app can explain, with the same fix-step shape as agent errors. */
 export class GhError extends Error {
@@ -187,7 +271,43 @@ export async function graphql<T>(
   variables: Record<string, string | number | string[]>,
   runner: GhRunner = defaultRunner,
 ): Promise<GraphQLResult<T>> {
-  const args = ['api', 'graphql', '--hostname', 'github.com', '-f', `query=${QUERIES[name]}`];
+  return send<T>(QUERIES[name], variables, runner);
+}
+
+/** GitHub's answer when the login can read but not write. */
+const WRITE_DENIED = /Resource not accessible by (personal access token|integration)|must have (push|write) access|FORBIDDEN|not authorized to|insufficient scopes|requires the ['`]?repo['`]? scope/i;
+
+/**
+ * Runs one of the compiled-in review mutations. Unlike reads, any GraphQL error fails the call:
+ * a write either happened or it didn't. Missing write access becomes `gh_write_denied`.
+ */
+export async function mutate<T>(
+  name: MutationName,
+  variables: Record<string, string | number | string[]>,
+  runner: GhRunner = defaultRunner,
+): Promise<T> {
+  let result: GraphQLResult<T>;
+  try {
+    result = await send<T>(MUTATIONS[name], variables, runner);
+  } catch (err) {
+    if (err instanceof GhError && WRITE_DENIED.test(err.message)) throw writeDenied(err.message);
+    throw err;
+  }
+  if (result.errors.length) {
+    const msg = result.errors.map((e) => e.message).join('; ').slice(0, 300);
+    if (result.errors.some((e) => e.type === 'FORBIDDEN') || WRITE_DENIED.test(msg)) throw writeDenied(msg);
+    throw new GhError('gh_unavailable', `GitHub refused it: ${msg}`);
+  }
+  return result.data;
+}
+
+function writeDenied(detail: string): GhError {
+  const said = detail.replace(/^GitHub (returned an error|refused it|CLI call failed): /, '').slice(0, 200);
+  return new GhError('gh_write_denied', `GitHub said: ${said}`, FIX_WRITE_ACCESS);
+}
+
+async function send<T>(document: string, variables: Record<string, string | number | string[]>, runner: GhRunner): Promise<GraphQLResult<T>> {
+  const args = ['api', 'graphql', '--hostname', 'github.com', '-f', `query=${document}`];
   for (const [key, value] of Object.entries(variables)) {
     if (!/^[A-Za-z][A-Za-z0-9]*$/.test(key)) throw new Error(`bad variable name ${key}`);
     if (Array.isArray(value)) {
