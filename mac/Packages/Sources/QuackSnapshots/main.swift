@@ -400,6 +400,26 @@ func reviewSelfCheck(_ view: some View, out: String?) {
     })()
     """)
     print("outdated comment:", outdatedShown)
+    // Viewed folds the file to its header, as on GitHub; the chevron unfolds and folds it by hand,
+    // and unticking Viewed opens it again.
+    let folding = js("""
+    (() => {
+      const count = () => Number(document.getElementById('scroller').getAttribute('aria-rowcount'));
+      const head = () => document.querySelector('#content .fh');
+      window.quack.setReview({ enabled: true, me: { initials: 'DE', color: '#2563eb' }, threads: [], drafts: [], viewed: { 'src/long.ts': true } });
+      const viewed = count();
+      head().querySelector('.fold').click();
+      const unfolded = count();
+      head().querySelector('.fold').click();
+      const refolded = count();
+      head().querySelector('.viewed').click();
+      const unticked = count();
+      return JSON.stringify({ viewed, unfolded, refolded, unticked, chevron: !!head().querySelector('.fold[aria-expanded=true]') });
+    })()
+    """)
+    print("folding:", folding)
+    _ = js("window.quack.setReview({ enabled: true, me: { initials: 'DE', color: '#2563eb' }, threads: [], drafts: [], viewed: { 'src/long.ts': true } }); true")
+    picture("diff-review-folded")
     picture("diff-review-outdated")
     window.orderOut(nil)
     let ok = shown.contains("\"threads\":2") && shown.contains("\"resolved\":1") && shown.contains("\"drafts\":1") && !shown.contains("\"dots\":0")
@@ -408,6 +428,7 @@ func reviewSelfCheck(_ view: some View, out: String?) {
         && saved.contains("\"editor\":false") && agent.contains("\"where\":\"on lines 28–30\"") && agent.contains("\"tag\":true")
         && agent.contains("\"cancel\":\"Discard\"") && agent.contains("\"disabled\":true,\"label\":\"Redrafting…\"")
         && agent.contains("\"text\":\"Why is `line30` 30?\",\"disabled\":false,\"editors\":1") && split.contains("\"onNewSide\":true,\"label\":\"Lines 9–11\"") && splitEditor.contains("\"right\":true,\"rowRs\":true") && outdatedShown.contains("\"flagged\":true,\"note\":\"line 12 changed in c3d8e11\",\"move\":true,\"lines\":2")
+        && folding.contains("\"viewed\":1,") && folding.contains("\"refolded\":1,") && !folding.contains("\"unfolded\":1,") && !folding.contains("\"unticked\":1,") && folding.contains("\"chevron\":true")
     print(ok ? "PASS" : "FAIL")
     exit(ok ? 0 : 1)
 }
@@ -486,7 +507,8 @@ MainActor.assumeIsolated {
         let store = PRStore(preview: prKey, model: writeModel, review: prReview, labels: nil, diff: diff)
         let threads: [ReviewThread] = decode(#"[{"id":"PRRT_1","path":"src/long.ts","side":"RIGHT","line":4,"startLine":null,"originalLine":4,"isResolved":false,"isOutdated":false,"canResolve":true,"canReply":true,"comments":[{"id":"c1","author":"pat-author","body":"Should `line4` be a constant?","createdAt":"\#(iso(hoursAgo: 30))","url":"u"},{"id":"c2","author":"dev","body":"Yes, will do.","createdAt":"\#(iso(hoursAgo: 20))","url":"u"}]},{"id":"PRRT_2","path":"src/long.ts","side":"RIGHT","line":30,"startLine":null,"originalLine":30,"isResolved":true,"isOutdated":false,"canResolve":true,"canReply":true,"comments":[{"id":"c3","author":"sam-other","body":"Can this throw?","createdAt":"\#(iso(hoursAgo: 50))","url":"u"}]}]"#)
         let drafts: [DraftComment] = decode(#"[{"id":"0b9f3c1e-0000-4000-8000-000000000001","headSha":"\#(sha)","anchor":{"path":"src/long.ts","side":"RIGHT","line":22,"startLine":20},"body":"Where does `22` come from?","origin":"me","createdAt":"\#(iso(hoursAgo: 1))","updatedAt":"\#(iso(hoursAgo: 1))"}]"#)
-        store.previewReview(drafts: drafts, threads: threads, viewed: ["src/long.ts": .viewed], viewer: "dev")
+        // Viewed, then changed: ticked off again, so the file stays open for the checks.
+        store.previewReview(drafts: drafts, threads: threads, viewed: ["src/long.ts": .dismissed], viewer: "dev")
         reviewSelfCheck(NavigationStack { PRTabView(model: writeModel, workspace: ws, store: store) }, out: CommandLine.arguments.dropFirst().first)
     }
     if ProcessInfo.processInfo.environment["QUACK_SELECT_CHECK"] != nil {

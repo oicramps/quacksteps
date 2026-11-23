@@ -166,3 +166,9 @@ textarea.box.focus:focus{background:var(--win);box-shadow:0 0 0 1px var(--accent
 .btn[disabled]{opacity:.5}
 /* split view: boxes under the new (right) side */
 .rs > #card,.rs > .thread{margin-left:calc(50% + 24px);margin-right:12px}
+.fh .fold{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin-left:-4px;border:0;border-radius:4px;background:transparent;color:var(--label2);flex:none;cursor:default;padding:0}
+.fh .fold:hover{background:var(--fill);color:var(--label)}
+.fh .fold svg{transition:transform .12s ease}
+.fh.folded .fold svg{transform:rotate(-90deg)}
+.fh.folded .path{color:var(--label2)}
+@media (prefers-reduced-motion:reduce){.fh .fold svg{transition:none}}

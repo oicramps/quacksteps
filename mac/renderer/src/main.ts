@@ -160,6 +160,8 @@ const live = new Map<number, HTMLElement>();
 let cardEl: HTMLElement | null = null;
 let stickyFile = -1;
 let pinnedFile: string | null = null;
+/** Files folded or unfolded by hand, by path; otherwise a viewed file is folded, as on GitHub. */
+const foldOverride = new Map<string, boolean>();
 let lastReported: string | null = null;
 
 function post(message: Record<string, unknown>): void {
@@ -303,10 +305,42 @@ const LOGO =
   '<g transform="rotate(-12 18 12)"><path d="M18 21.4Q16.6 21.4 16 20L10.6 8.8Q9.9 6.6 12 6.8Q15.3 10.6 16.8 4.2Q18 1.8 19.2 4.2Q20.7 10.6 24 6.8Q26.1 6.6 25.4 8.8L20 20Q19.4 21.4 18 21.4Z" fill="#ff980f"/>' +
   '<path d="M18 17.2L12.2 8.2M18 17.2V4.8M18 17.2L23.8 8.2" fill="none" stroke="#ffcc33" stroke-width="1.2" stroke-linecap="round"/></g></svg>';
 
+/** A file shows only its header: viewed (unless unfolded by hand), or folded by hand. */
+function isFolded(f: number): boolean {
+  const path = files[f]?.path;
+  if (path === undefined) return false;
+  return foldOverride.get(path) ?? (review.enabled && !!review.viewed[path]);
+}
+
+/** Re-lays the rows after a file folds or unfolds; a file folded at the top leaves its header there. */
+function foldChanged(): void {
+  const f = currentFile();
+  const delta = f >= 0 ? scroller.scrollTop - offsets[fileStart[f]] : 0;
+  relayout();
+  if (f >= 0 && fileStart[f] !== undefined) {
+    scroller.scrollTop = offsets[fileStart[f]] + (isFolded(f) ? 0 : delta);
+    draw();
+    reportVisible();
+  }
+}
+
 function fileHeader(f: number): HTMLElement {
   const file = files[f];
-  const h = el("div", "fh");
+  const folded = isFolded(f);
+  const h = el("div", `fh${folded ? " folded" : ""}`);
   h.dataset.f = String(f);
+  const fold = el("button", "fold");
+  fold.type = "button";
+  fold.innerHTML = ICON_CHEVRON;
+  fold.setAttribute("aria-expanded", String(!folded));
+  fold.setAttribute("aria-label", `${folded ? "Show" : "Hide"} ${file.path}`);
+  fold.title = folded ? "Show file" : "Hide file";
+  fold.addEventListener("click", (e) => {
+    e.stopPropagation();
+    foldOverride.set(file.path, !folded);
+    foldChanged();
+  });
+  h.append(fold);
   const shown = file.status === "renamed" && file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
   h.append(el("span", "path", shown));
   h.querySelector(".path")!.setAttribute("title", shown);
@@ -328,7 +362,11 @@ function fileHeader(f: number): HTMLElement {
     v.append(tick, document.createTextNode("Viewed"));
     v.addEventListener("click", (e) => {
       e.stopPropagation();
+      // Folds (or unfolds) at once, as on GitHub; Swift's answer confirms or puts it back.
+      review.viewed = { ...review.viewed, [file.path]: !isViewed };
+      foldOverride.delete(file.path);
       post({ type: "markViewed", path: file.path, viewed: !isViewed });
+      foldChanged();
     });
     h.append(v);
   }
@@ -612,7 +650,12 @@ function layoutRows(): void {
     hang(index.get(f)?.get(lineKey(d.side, d.line)) ?? index.get(f)?.get("file"), { k: "draft", f, id: d.id });
   }
   rows = [];
+  const folded = files.map((_, f) => isFolded(f));
   for (const r of base) {
+    if (folded[r.f]) {
+      if (r.k === "file") rows.push(r);
+      continue;
+    }
     rows.push(r);
     if (cardOpen && r === keepB) rows.push({ k: "card", f: r.f });
     if (editor && r === editor.after) rows.push({ k: "editor", f: r.f });
@@ -716,6 +759,7 @@ function iconButton(label: string, svg: string, onClick: () => void): HTMLButton
 
 const ICON_EDIT = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>';
 const ICON_DELETE = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7h14M10 7V4.5h4V7M7 7l1 13h8l1-13"/></svg>';
+const ICON_CHEVRON = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
 const ICON_CHECK = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 const ICON_COMMENT = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5h14v10H10l-4 4v-4H5z"/></svg>';
 const ICON_ASK = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4l1.7 4.6 4.6 1.7-4.6 1.7L11 16.6 9.3 12 4.7 10.3 9.3 8.6z"/></svg>';
@@ -1126,9 +1170,15 @@ function selectionBar(): HTMLElement {
 /** Applies what Swift sent; only rows that changed are redrawn. */
 function setReview(p: ReviewPayload): void {
   const before = JSON.stringify({ ...review, viewed: null });
+  const foldedBefore = files.map((_, f) => isFolded(f)).join();
   review = { enabled: !!p.enabled, me: p.me ?? review.me, drafts: p.drafts ?? [], threads: p.threads ?? [], viewed: p.viewed ?? {} };
   if (replyOpen && !review.threads.some((t) => t.id === replyOpen)) closeReply();
   if (editor?.draftId && !review.drafts.some((d) => d.id === editor!.draftId)) closeEditor(false);
+  if (files.map((_, f) => isFolded(f)).join() !== foldedBefore) {
+    heightCache.clear();
+    foldChanged();
+    return;
+  }
   if (JSON.stringify({ ...review, viewed: null }) === before) {
     // Only viewed ticks changed: the file headers.
     for (const [i, e] of live) if (rows[i].k === "file") { e.remove(); live.delete(i); }
