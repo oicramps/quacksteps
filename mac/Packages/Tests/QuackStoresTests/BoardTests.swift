@@ -65,3 +65,20 @@ private func pr(_ n: Int, repo: String = "web", position: Int? = nil, size: Int 
     let entries = InboxEntry.group([pr(1, position: 1), pr(2, repo: "api", position: 2, parent: 1)])
     #expect(entries.count == 2)
 }
+
+@Test func stackNameComesFromWhatTheTitlesShare() {
+    func named(_ titles: [String]) -> String {
+        let items = titles.enumerated().map { i, t in
+            var item = pr(i + 1, position: i + 1, parent: i == 0 ? nil : i)
+            item.title = t
+            return item
+        }
+        return StackGroup(id: "s", items: items).name
+    }
+    #expect(named(["[REL-1447] Show the print DPI", "[REL-1447] Add a photo debug toggle"]) == "REL-1447")
+    #expect(named(["Trip map: cluster pins", "Trip map: zoom"]) == "Trip map")
+    #expect(named(["Search: debounce", "Map: zoom"]) == "Search", "no shared words: the bottom PR's prefix")
+    #expect(named(["Add search", "Fix map"]) == "Add search")
+    #expect(named(["Add search", "Add map"]) == "Add search", "shared plain words aren't a name")
+    #expect(named(["[Search] Debounce input", "[Search] Cache results"]) == "Search")
+}

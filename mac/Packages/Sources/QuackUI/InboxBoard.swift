@@ -47,7 +47,8 @@ struct BoardCells: View {
     var lines: Int
     var since: Date?
     var status: (Date) -> BoardStatus
-    var totalSize: Bool = false
+    /// Set on a stack header: the lines are the stack's total, shown without a size.
+    var stackCount: Int? = nil
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
@@ -55,7 +56,7 @@ struct BoardCells: View {
             let status = status(context.date)
             HStack(spacing: BoardColumns.spacing) {
                 CIGlyph(ci).frame(width: BoardColumns.ci)
-                SizeCell(lines: lines, total: totalSize).frame(width: BoardColumns.size, alignment: .trailing)
+                SizeCell(lines: lines, stackCount: stackCount).frame(width: BoardColumns.size, alignment: .trailing)
                 FlapText(waited.map(BoardFormat.flaps) ?? BoardFormat.noTimer, key: key, dim: waited == nil)
                     .frame(width: BoardColumns.wait, alignment: .leading)
                     .help(waited.map { "Waiting \(WaitFormat.spoken($0))" } ?? "Draft: no timer")
@@ -68,11 +69,34 @@ struct BoardCells: View {
 }
 
 /// "340 lines  M": the line count, then the size letter on light flap tiles. Only L and XL get colour.
+/// A stack header shows its total instead ("949 lines" over "in 2 PRs"), with no size letter: a size
+/// says how big one review is, and each PR in the stack keeps its own.
 struct SizeCell: View {
     var lines: Int
-    var total: Bool = false
+    var stackCount: Int? = nil
 
     var body: some View {
+        if let stackCount { total(stackCount) } else { single }
+    }
+
+    private func total(_ count: Int) -> some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Text(verbatim: "\(lines.formatted()) lines")
+                .font(.system(size: 11))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+            Text(verbatim: "in \(count) PRs")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .help("\(lines.formatted()) changed lines across the \(count) PRs of the stack")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(lines.formatted()) changed lines across \(count) PRs")
+    }
+
+    @ViewBuilder private var single: some View {
         let size = PRSize(lines: lines)
         let (bg, fg): (Color, Color) = switch size {
         case .l: (Tokens.medBg, Tokens.warning)
@@ -96,9 +120,9 @@ struct SizeCell: View {
             }
         }
         .fixedSize()
-        .help("\(size.rawValue): \(lines.formatted()) changed lines\(total ? " in the stack" : "")")
+        .help("\(size.rawValue): \(lines.formatted()) changed lines")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(size.rawValue), \(lines.formatted()) changed lines\(total ? " in total" : "")")
+        .accessibilityLabel("\(size.rawValue), \(lines.formatted()) changed lines")
     }
 }
 
@@ -279,7 +303,7 @@ struct StackHeaderRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             BoardCells(key: group.id, ci: group.worstCI, lines: group.totalLines, since: group.oldestWait,
-                       status: { group.mostUrgentStatus(now: $0) }, totalSize: true)
+                       status: { group.mostUrgentStatus(now: $0) }, stackCount: group.items.count)
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())

@@ -342,7 +342,7 @@ func reviewSelfCheck(_ view: some View, out: String?) {
     """)
     print("thread arrives while typing:", pushed)
     picture("diff-review-editor")
-    let saved = js("window.quack.draftSaved(true); JSON.stringify({ editor: !!document.getElementById('ed-text') && document.getElementById('ed-text').isConnected })")
+    let saved = js("window.quack.draftSaved(true); JSON.stringify({ editor: !!document.getElementById('ed-text') && document.getElementById('ed-text').isConnected, bar: !!document.querySelector('.actbar') })")
     print("after a successful save:", saved)
     // "Turn into comment": the agent's draft opens on its lines; Redraft disables it, then fills new text.
     let agent = js("""
@@ -425,7 +425,7 @@ func reviewSelfCheck(_ view: some View, out: String?) {
     let ok = shown.contains("\"threads\":2") && shown.contains("\"resolved\":1") && shown.contains("\"drafts\":1") && !shown.contains("\"dots\":0")
         && !shown.contains("\"viewed\":0") && flow.contains("Comment") && flow.contains("\"focused\":true") && flow.contains("magic number")
         && flow.contains("lines 9–11") && pushed.contains("\"same\":true") && pushed.contains("\"focused\":true") && pushed.contains("\"caret\":3")
-        && saved.contains("\"editor\":false") && agent.contains("\"where\":\"on lines 28–30\"") && agent.contains("\"tag\":true")
+        && saved.contains("\"editor\":false") && saved.contains("\"bar\":false") && agent.contains("\"where\":\"on lines 28–30\"") && agent.contains("\"tag\":true")
         && agent.contains("\"cancel\":\"Discard\"") && agent.contains("\"disabled\":true,\"label\":\"Redrafting…\"")
         && agent.contains("\"text\":\"Why is `line30` 30?\",\"disabled\":false,\"editors\":1") && split.contains("\"onNewSide\":true,\"label\":\"Lines 9–11\"") && splitEditor.contains("\"right\":true,\"rowRs\":true") && outdatedShown.contains("\"flagged\":true,\"note\":\"line 12 changed in c3d8e11\",\"move\":true,\"lines\":2")
         && folding.contains("\"viewed\":1,") && folding.contains("\"refolded\":1,") && !folding.contains("\"unfolded\":1,") && !folding.contains("\"unticked\":1,") && folding.contains("\"chevron\":true")

@@ -1190,10 +1190,13 @@ function setReview(p: ReviewPayload): void {
   relayout();
 }
 
-/** Swift's answer to saveDraft: close the editor, or let the user try again. */
+/** Swift's answer to saveDraft: close the editor and drop the selection it was for, or let the user try again. */
 function draftSaved(ok: boolean): void {
   if (!editor) return;
-  if (ok) closeEditor(true);
+  if (ok) {
+    closeEditor(true);
+    clearSelection();
+  }
   else {
     editorSaving = false;
     const ta = editorEl?.querySelector("#ed-text") as HTMLTextAreaElement | null;
