@@ -10,7 +10,7 @@ import type {
   PrRef,
   SettingsPatch,
   WorkspacePrTarget,
-} from '@quack/shared';
+} from '@quacksteps/shared';
 import { LIMITS } from './config.ts';
 
 const OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;

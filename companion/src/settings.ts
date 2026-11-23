@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { AgentStatus, DiagnosticsMessage, SettingsMessage, SettingsPatch, SetupCheck } from '@quack/shared';
-import { QUACK_VERSION } from '@quack/shared';
+import type { AgentStatus, DiagnosticsMessage, SettingsMessage, SettingsPatch, SetupCheck } from '@quacksteps/shared';
+import { QUACK_VERSION } from '@quacksteps/shared';
 import type { Adapter } from './adapters/types.ts';
 import { redactSecrets } from './checks.ts';
 import { type Config, loadConfig, saveSettings } from './config.ts';

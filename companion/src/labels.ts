@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { AgentId, FileRisk, PrKey, RiskLabelsMessage } from '@quack/shared';
+import type { AgentId, FileRisk, PrKey, RiskLabelsMessage } from '@quacksteps/shared';
 import { adapters as defaultAdapters } from './adapters/index.ts';
 import type { Adapter } from './adapters/types.ts';
 import { type Config, loadConfig } from './config.ts';

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { PrKey, ReviewState } from '@quack/shared';
+import type { PrKey, ReviewState } from '@quacksteps/shared';
 import type { Config } from '../src/config.ts';
 import { openDb } from '../src/db.ts';
 import { type ReviewOps, ReviewingService } from '../src/reviewing.ts';

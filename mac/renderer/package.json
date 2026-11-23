@@ -1,5 +1,5 @@
 {
-  "name": "@quack/renderer",
+  "name": "@quacksteps/renderer",
   "version": "0.2.0",
   "private": true,
   "type": "module",

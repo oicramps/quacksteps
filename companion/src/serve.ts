@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { type AgentId, QUACK_VERSION } from '@quack/shared';
+import { type AgentId, QUACK_VERSION } from '@quacksteps/shared';
 import { REST, graphql, restGet } from './gh.ts';
 import { loadConfig } from './config.ts';
 import { openDb } from './db.ts';

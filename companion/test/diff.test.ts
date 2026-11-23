@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import type { PrKey } from '@quack/shared';
+import type { PrKey } from '@quacksteps/shared';
 import type { Config } from '../src/config.ts';
 import { DiffError, type DiffOps, DiffService, MAX_FILE_PATCH, filesFromGit, filesFromRest, realDiffOps } from '../src/diff.ts';
 import { REST, restGet } from '../src/gh.ts';

@@ -1,4 +1,4 @@
-import type { ErrorCode, FixStep } from '@quack/shared';
+import type { ErrorCode, FixStep } from '@quacksteps/shared';
 import { type RunResult, findBinary, run } from './exec.ts';
 
 /**

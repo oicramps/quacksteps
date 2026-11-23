@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { FixStep, RepoOverrideCheck, RootCheck, WorkspacePrTarget, WorkspaceSaveRequest, WorkspaceStatus } from '@quack/shared';
+import type { FixStep, RepoOverrideCheck, RootCheck, WorkspacePrTarget, WorkspaceSaveRequest, WorkspaceStatus } from '@quacksteps/shared';
 import { CONFIG_FILE, contractHome, expandHome } from './paths.ts';
 import { type Config, hasConfigFile, loadConfig, saveWorkspaceConfig, setRepoPath } from './config.ts';
 import { runGit } from './exec.ts';

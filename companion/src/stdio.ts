@@ -1,5 +1,5 @@
-import type { ServerMessage } from '@quack/shared';
-import { ALLOWED_EXTENSION_IDS, DEV_EXTENSION_ID, QUACK_VERSION } from '@quack/shared';
+import type { ServerMessage } from '@quacksteps/shared';
+import { ALLOWED_EXTENSION_IDS, DEV_EXTENSION_ID, QUACK_VERSION } from '@quacksteps/shared';
 import { findClone } from './repo.ts';
 import { loadConfig } from './config.ts';
 import { MessageDecoder } from './framing.ts';

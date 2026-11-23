@@ -1,4 +1,4 @@
-import type { AgentId, ClosedInfo, FixStep, PrKey, ReviewState, ReviewStep } from '@quack/shared';
+import type { AgentId, ClosedInfo, FixStep, PrKey, ReviewState, ReviewStep } from '@quacksteps/shared';
 import { type Config, loadConfig } from './config.ts';
 import type { Db } from './db.ts';
 import { log, logPilot } from './log.ts';

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import type { AgentStatus, SettingsPatch } from '@quack/shared';
+import type { AgentStatus, SettingsPatch } from '@quacksteps/shared';
 import type { Adapter } from '../src/adapters/types.ts';
 import { DEFAULTS, loadConfig, saveSettings } from '../src/config.ts';
 import { SettingsService, worktreeStats } from '../src/settings.ts';
